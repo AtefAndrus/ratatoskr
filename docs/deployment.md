@@ -41,13 +41,12 @@ SQLite に受信アカウントの認証情報、Web Push 鍵、監視対象、�
 ## 4. 初回デプロイと受信アカウントの登録
 
 1. **Deploy** を押し、ログに `Discord client ready` と `HTTP server started` が出るのを確認する。
-2. Coolify の **Terminal** からコンテナへ入り、受信アカウントを登録する。
+2. Coolify の **Terminal** からコンテナへ入り、受信アカウントを登録する。値の取り方と CLI の詳細は [setup.md](setup.md#受信用-x-アカウント) を参照する。
 
    ```bash
    bun run cli receiver:add main
    ```
 
-   `auth_token` と `ct0` は非表示入力で貼り付ける。
    1 分以内にログへ `AutoPush subscription created` と `Web Push subscription registered with X` が出れば受信を開始している。
 
 3. Discord サーバーで `/watch add account:<X アカウント名>` を実行し、監視対象を登録する。

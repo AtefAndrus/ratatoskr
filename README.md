@@ -18,97 +18,57 @@ X (通知)  ──Web Push──▶ Mozilla AutoPush ──WebSocket──▶ �
 X (内部 GraphQL) ◀──適応ポーリング── 受信アカウント ──▶ ┘
 ```
 
-- **受信アカウント**：監視対象をフォローし、通知を受け取る専用の X アカウント。CLI で登録する。
+- **受信アカウント**：監視対象をフォローし、通知を受け取る専用の X アカウント。CLI で登録し、複数あれば互いの取りこぼしを補う。
 - **監視対象**：投稿を中継する X アカウント。Discord の `/watch add` で登録する。
 - **経路**：監視対象と投稿先チャンネルの組。n:m で対応し、同じ対象を複数チャンネルへ流すことも、複数の対象を 1 つのチャンネルへ集約することもできる。
 
 ランタイムは Bun、永続化は SQLite 1 ファイル、デプロイ先は Coolify である。
 
-## Discord での使い方
+## はじめかた
+
+1. Discord Developer Portal でアプリケーションを作り、Bot Token と Application ID を控える。設定値は [docs/setup.md](docs/setup.md#discord-アプリケーション) を参照する。
+2. 依存を入れ、秘密情報を `.env.local` に書く。
+
+   ```bash
+   mise install
+   mise run setup
+   bun run cli env:set DISCORD_TOKEN
+   bun run cli env:set DISCORD_APPLICATION_ID
+   ```
+
+3. 受信用の X アカウント (捨てアカウント) の Cookie を控え、CLI で登録する。値の取り方は [docs/setup.md](docs/setup.md#受信用-x-アカウント) を参照する。
+
+   ```bash
+   bun run cli receiver:add main
+   ```
+
+4. 起動する。
+
+   ```bash
+   bun dev
+   ```
+
+5. Bot を招待したサーバーで `/watch add account:<X アカウント名>` を実行する。
+
+本番へは Coolify にデプロイする。手順は [docs/deployment.md](docs/deployment.md) を参照する。
+
+## コマンド
 
 コマンドは `Manage Server` 権限を持つメンバーがサーバー内で実行できる。
 
 | コマンド | 説明 |
 | -------- | ---- |
 | `/watch add account:<X アカウント名> [channel:<チャンネル>]` | 監視対象を追加し、投稿先チャンネルを紐づける。チャンネル省略時は実行したチャンネル |
-| `/watch remove account:<X アカウント名> [channel:<チャンネル>]` | 紐づけを削除する。アカウント名はこのサーバーに登録済みのものから補完で選べる。投稿先が無くなった対象は取得を止める |
-| `/watch list` | このサーバーの監視対象と投稿先チャンネルの一覧と、投稿 URL のドメイン設定を表示する |
-| `/watch domain [domain:<x.com/fixupx.com/fixvx.com>]` | 投稿 URL のドメインをサーバー単位で設定する。省略時は現在の設定を表示する |
+| `/watch remove account:<X アカウント名> [channel:<チャンネル>]` | 紐づけを削除する。アカウント名は登録済みのものから補完で選べる |
+| `/watch list` | このサーバーの監視対象、投稿先チャンネル、投稿 URL のドメイン設定を表示する |
+| `/watch domain [domain:<x.com か fixupx.com か fixvx.com>]` | 投稿 URL のドメインをサーバー単位で設定する。省略時は現在の設定を表示する |
 
-`/watch domain` で `fixupx.com` などを選ぶと、そのサーバーへ送る投稿 URL のホストを x.com から置き換える。
-Discord 上で動画や複数画像の埋め込みを整形する外部サービスを使うための設定で、重複排除は元の投稿 ID で行うためドメインを変えても同じ投稿が二度届くことはない。
+- `/watch add` は受信アカウントで対象をフォローし、投稿通知とリポスト通知を有効化してから経路を登録する。受信アカウントが複数ある場合、残りには 10 分以内に同じ設定が行き渡る。
+- `/watch remove` で投稿先が無くなった対象は、投稿の取得を止める。X 側のフォローは残すので、再登録すると即座に受信を再開する。
+- `/watch domain` で `fixupx.com` などを選ぶと、そのサーバーへ送る投稿 URL のホストを x.com から置き換え、動画や複数画像の埋め込みを整形する外部サービスを経由させる。重複排除は投稿 ID で行うため、ドメインを変えても同じ投稿が二度届くことはない。
+- 追加と削除の結果は公開メッセージで返し、一覧とエラーは実行者だけに見える。
 
-`/watch add` は受信アカウントで対象をフォローし、投稿通知とリポスト通知を有効化してから経路を登録する。
-受信アカウントが複数ある場合、残りのアカウントには監督ループが 10 分以内に同じ設定を行き渡らせる。
-
-## セットアップ
-
-### Discord アプリケーション
-
-Discord Developer Portal でアプリケーションを作り、次のとおり設定する。
-
-| 項目 | 値 |
-| ---- | -- |
-| Installation → Install Contexts | Guild Install のみ |
-| Installation → Default Install Settings → Scopes | `bot`, `applications.commands` |
-| Installation → Default Install Settings → Permissions | View Channels, Send Messages, Send Messages in Threads, Embed Links |
-| Bot → Privileged Gateway Intents | すべて無効 (使うのは `Guilds` intent だけ) |
-| Bot → Public Bot | 無効 (自分のサーバーだけで使う場合) |
-
-上の 4 つの権限を合計した permissions 整数は `274877926400` である。
-Embed Links が無いと、送った投稿 URL のプレビューが展開されない。
-
-アイコンとバナーは `assets/` にある。
-`icon.png` と `banner.png` が本番用、`icon-dev.png` と `banner-dev.png` が開発用で、Developer Portal の General Information の App Icon と、Bot の Banner にそれぞれ設定する。
-
-### ローカル環境
-
-```bash
-mise install
-mise run setup
-bun run cli env:set DISCORD_TOKEN
-bun run cli env:set DISCORD_APPLICATION_ID
-```
-
-`env:set` は値を非表示入力で受け取り `.env.local` に書く。
-`.env.local` は git 管理外で、`.env` より優先して読まれる。
-
-### 受信アカウント
-
-受信アカウントには専用の捨てアカウントを使う。
-ブラウザで受信アカウントにログインし、Cookie の `auth_token` と `ct0` を控える。
-
-```bash
-bun run cli receiver:add <label>
-```
-
-値はコマンド引数に渡さず、実行後の非表示入力で貼り付ける。
-端末が無い環境では環境変数 `X_AUTH_TOKEN` と `X_CT0` から読む。
-
-複数登録すると全アカウントがすべての監視対象をフォローし、どれか 1 つが通知を落としても他が補う。
-Discord への送信は経路と投稿の組で重複排除するため、複数アカウントが同じ通知を受けても 1 回しか送らない。
-
-Bot は 1 分ごとに受信アカウントの一覧を読み直すため、追加と削除に再起動は要らない。
-認証情報の更新だけは再起動が必要である。
-
-```bash
-bun run cli receiver:list
-bun run cli receiver:update <label>
-bun run cli receiver:disable <label>
-bun run cli receiver:enable <label>
-bun run cli receiver:remove <label>
-bun run cli watch:list
-```
-
-### 起動
-
-```bash
-bun dev
-```
-
-起動時に Slash Command をグローバル登録する。
-反映まで最大 1 時間かかることがある。
-Bot は受信アカウントごとに AutoPush の購読を作成して X に登録し、購読情報と Web Push の秘密鍵を SQLite に保存する。
+受信アカウントの管理コマンドは [docs/setup.md](docs/setup.md#受信用-x-アカウント) を参照する。
 
 ## 環境変数
 
@@ -116,7 +76,7 @@ Bot は受信アカウントごとに AutoPush の購読を作成して X に登
 | ---- | ---- | ------ | ---- |
 | `DISCORD_TOKEN` | Yes | | Discord Bot Token |
 | `DISCORD_APPLICATION_ID` | Yes | | Discord Application ID |
-| `NODE_ENV` | No | `development` | 動作モード |
+| `NODE_ENV` | No | `development` | 動作モード。Docker イメージでは `production` |
 | `DATABASE_PATH` | No | `data/ratatoskr.db` | SQLite パス。Docker イメージでは `/app/data/ratatoskr.db` |
 | `HEALTH_PORT` | No | `3000` | `/health` と `/admin/*` の HTTP ポート |
 | `ADMIN_API_SECRET` | No | | 管理 API の HMAC 共通シークレット。未設定なら `/admin/*` は 503 |
@@ -127,18 +87,9 @@ Bot は受信アカウントごとに AutoPush の購読を作成して X に登
 
 ## 運用
 
-### デプロイ
-
-Coolify のアプリ作成、永続ボリューム、環境変数、GitHub Release からの自動デプロイの手順は [docs/deployment.md](docs/deployment.md) に記載する。
-
-### 運用データと管理 API
-
-X 側の仕様変更を追えるよう、AutoPush の生フレーム、復号済みペイロード、内部 GraphQL の生応答、X との登録やフォローの応答を SQLite に保存する。
-生応答本文は `RAW_RETENTION_DAYS` を過ぎると本文だけ削除し、行そのものは `RETENTION_DAYS` まで残す。
-重複排除の根拠である配信 claim は削除しない。
-
-保存したデータは HMAC 認証付きの読み取り専用 API から取得できる。
-エンドポイントと署名手順は [docs/admin-api.md](docs/admin-api.md) に記載する。
+- **デプロイ**：Coolify のアプリ作成、永続ボリューム、環境変数、GitHub Release からの自動デプロイは [docs/deployment.md](docs/deployment.md) に記載する。
+- **運用データ**：X 側の仕様変更を追えるよう、AutoPush の生フレーム、復号済みペイロード、内部 GraphQL の生応答、X との登録やフォローの応答を SQLite に保存する。生応答本文は `RAW_RETENTION_DAYS` を過ぎると本文だけ削除し、行は `RETENTION_DAYS` まで残す。重複排除の根拠である配信 claim は削除しない。
+- **管理 API**：保存したデータは HMAC 認証付きの読み取り専用 API から取得できる。エンドポイントと署名手順は [docs/admin-api.md](docs/admin-api.md) に記載する。
 
 ### 制約
 
@@ -162,6 +113,9 @@ VS Code の `oxc.oxc-vscode` 拡張はバイナリを同梱せず、`node_module
 
 コミット前に lefthook が `bun run check` と同じ検査を走らせる。
 main への直接コミットは lefthook が止める。
+
+リリースは `package.json` の version を上げ、`mise exec -- git-cliff --tag v<version> --output CHANGELOG.md` で CHANGELOG を生成してマージし、タグと GitHub Release を公開する。
+Release の公開で Coolify へデプロイされる。
 
 ## ライセンス
 
