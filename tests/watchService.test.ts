@@ -30,6 +30,7 @@ describe("WatchService", () => {
         context.targets,
         context.routes,
         createSupervisor(),
+        context.guildSettings,
       );
       await expect(
         service.add({ handle: "example", guildId: "g", channelId: "c" }),
@@ -50,6 +51,7 @@ describe("WatchService", () => {
         context.targets,
         context.routes,
         supervisor,
+        context.guildSettings,
       );
 
       const first = await service.add({
@@ -105,6 +107,7 @@ describe("WatchService", () => {
         context.targets,
         context.routes,
         createSupervisor(true),
+        context.guildSettings,
       );
       await expect(
         service.add({ handle: "example", guildId: "g", channelId: "c" }),

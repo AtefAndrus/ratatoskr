@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { openDatabase } from "../../src/db";
 import { DeliveryRepository } from "../../src/db/repositories/deliveries";
 import { ExchangeRepository } from "../../src/db/repositories/exchanges";
+import { GuildSettingsRepository } from "../../src/db/repositories/guildSettings";
 import { InternalGraphqlRepository } from "../../src/db/repositories/internalGraphql";
 import { MaintenanceRepository } from "../../src/db/repositories/maintenance";
 import { NotificationRepository } from "../../src/db/repositories/notifications";
@@ -21,6 +22,7 @@ export interface TestContext {
   observations: InternalGraphqlRepository;
   exchanges: ExchangeRepository;
   maintenance: MaintenanceRepository;
+  guildSettings: GuildSettingsRepository;
 }
 
 export function createTestContext(): TestContext {
@@ -35,6 +37,7 @@ export function createTestContext(): TestContext {
     observations: new InternalGraphqlRepository(db),
     exchanges: new ExchangeRepository(db),
     maintenance: new MaintenanceRepository(db),
+    guildSettings: new GuildSettingsRepository(db),
   };
 }
 

@@ -9,6 +9,7 @@ import { loadConfigFromEnvFiles } from "./config";
 import { openDatabase } from "./db";
 import { DeliveryRepository } from "./db/repositories/deliveries";
 import { ExchangeRepository } from "./db/repositories/exchanges";
+import { GuildSettingsRepository } from "./db/repositories/guildSettings";
 import { InternalGraphqlRepository } from "./db/repositories/internalGraphql";
 import { MaintenanceRepository } from "./db/repositories/maintenance";
 import { NotificationRepository } from "./db/repositories/notifications";
@@ -42,11 +43,17 @@ async function bootstrap(): Promise<void> {
   const observations = new InternalGraphqlRepository(db);
   const exchanges = new ExchangeRepository(db);
   const maintenance = new MaintenanceRepository(db);
+  const guildSettings = new GuildSettingsRepository(db);
   logger.info("Database initialized", { path: config.databasePath });
 
   const client = createBotClient();
   metrics.attach({ client });
-  const delivery = new DeliveryService(routes, deliveries, new DiscordChannelPostSender(client));
+  const delivery = new DeliveryService(
+    routes,
+    deliveries,
+    new DiscordChannelPostSender(client),
+    guildSettings,
+  );
   const supervisor = new ReceiverSupervisor({
     receivers,
     targets,
@@ -61,7 +68,7 @@ async function bootstrap(): Promise<void> {
     // 起動前に作成された投稿は保存だけして送らない。AutoPush の再配信でバックログが流れるのを防ぐ。
     deliveryNotBefore: new Date().toISOString(),
   });
-  const watchService = new WatchService(receivers, targets, routes, supervisor);
+  const watchService = new WatchService(receivers, targets, routes, supervisor, guildSettings);
 
   client.once(Events.ClientReady, () => onReady(client));
   const onInteractionCreate = createInteractionCreateHandler(watchService);

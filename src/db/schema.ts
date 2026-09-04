@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const TIMESTAMP_DEFAULT = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -182,6 +182,16 @@ const MIGRATIONS: ReadonlyArray<(database: Database) => void> = [
       ) STRICT;
 
       CREATE INDEX external_exchanges_occurred_idx ON external_exchanges(occurred_at);
+    `);
+  },
+  (database) => {
+    database.exec(`
+      CREATE TABLE guild_settings (
+        guild_id TEXT PRIMARY KEY,
+        link_domain TEXT NOT NULL DEFAULT 'x.com',
+        created_at TEXT NOT NULL DEFAULT (${TIMESTAMP_DEFAULT}),
+        updated_at TEXT NOT NULL DEFAULT (${TIMESTAMP_DEFAULT})
+      ) STRICT;
     `);
   },
 ];

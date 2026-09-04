@@ -1,4 +1,5 @@
 import type { DeliveryRepository, DeliverySource } from "../db/repositories/deliveries";
+import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/guildSettings";
 import type { RouteRecord, RouteRepository } from "../db/repositories/routes";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
@@ -29,6 +30,20 @@ export function xSnowflakeTimestampMs(postId: string): number | null {
   return Number.isSafeInteger(milliseconds) ? milliseconds : null;
 }
 
+/** x.com の投稿 URL をサーバー設定のドメインに差し替える。x.com 以外のホストはそのまま返す。 */
+export function rewritePostUrl(postUrl: string, linkDomain: LinkDomain): string {
+  if (linkDomain === "x.com") return postUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(postUrl);
+  } catch {
+    return postUrl;
+  }
+  if (parsed.hostname !== "x.com" && parsed.hostname !== "www.x.com") return postUrl;
+  parsed.hostname = linkDomain;
+  return parsed.toString();
+}
+
 export function isPostOnOrAfter(postId: string, boundary: string): boolean {
   const postTimestampMs = xSnowflakeTimestampMs(postId);
   const boundaryMs = new Date(boundary).getTime();
@@ -46,6 +61,7 @@ export class DeliveryService {
     private readonly routes: RouteRepository,
     private readonly deliveries: DeliveryRepository,
     private readonly sender: DiscordPostSender,
+    private readonly guildSettings: GuildSettingsRepository | null = null,
   ) {}
 
   async deliver(
@@ -76,7 +92,11 @@ export class DeliveryService {
         continue;
       }
       try {
-        const sent = await this.sender.sendPostUrl(route.channelId, post.postUrl);
+        const linkDomain = this.guildSettings?.get(route.guildId).linkDomain ?? "x.com";
+        const sent = await this.sender.sendPostUrl(
+          route.channelId,
+          rewritePostUrl(post.postUrl, linkDomain),
+        );
         this.deliveries.record({
           source: post.source,
           sourceRecordId: post.sourceRecordId,
