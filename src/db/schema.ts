@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const TIMESTAMP_DEFAULT = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -192,6 +192,11 @@ const MIGRATIONS: ReadonlyArray<(database: Database) => void> = [
         created_at TEXT NOT NULL DEFAULT (${TIMESTAMP_DEFAULT}),
         updated_at TEXT NOT NULL DEFAULT (${TIMESTAMP_DEFAULT})
       ) STRICT;
+    `);
+  },
+  (database) => {
+    database.exec(`
+      ALTER TABLE internal_graphql_observation_posts ADD COLUMN referenced_author_handle TEXT;
     `);
   },
 ];

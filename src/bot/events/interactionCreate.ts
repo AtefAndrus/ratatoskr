@@ -165,11 +165,7 @@ async function handleWatch(
   if (subcommand === "remove") {
     const result = watchService.remove({ handle: account, channelId: channel.id });
     const content = result.removed
-      ? `@${account.replace(/^@/, "")} → <#${channel.id}> を削除しました。${
-          result.targetDisabled
-            ? " このアカウントの投稿先が無くなったので、投稿の取得も止めました。"
-            : ""
-        }`
+      ? `@${account.replace(/^@/, "")} → <#${channel.id}> を削除しました。`
       : "該当する監視対象と投稿先の組はありません。";
     await interaction.reply({
       content,

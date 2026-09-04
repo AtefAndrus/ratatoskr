@@ -48,11 +48,17 @@ describe("内部 GraphQL からの Discord 通知", () => {
       await deliverNewInternalPosts({
         delivery: new DeliveryService(context.routes, context.deliveries, sender),
         target: { id: target, handle: "example" },
-        posts: [createPost(1, "200", "2026-09-04T00:01:00.000Z", ["repost"], ["199"])],
+        posts: [
+          createPost(1, "200", "2026-09-04T00:01:00.000Z", ["repost"], ["199"], "origin_user"),
+          createPost(2, "201", "2026-09-04T00:02:00.000Z", ["repost"], ["198"]),
+        ],
         deliveryNotBefore: "2026-09-04T00:00:30.000Z",
         attemptedAt: "2026-09-04T00:01:10.000Z",
       });
-      expect(sender.sent).toEqual(["discord-channel:https://x.com/i/web/status/199"]);
+      expect(sender.sent).toEqual([
+        "discord-channel:https://x.com/origin_user/status/199",
+        "discord-channel:https://x.com/i/web/status/198",
+      ]);
     } finally {
       context.db.close();
     }
@@ -97,6 +103,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
                 authorHandle: "example",
                 types: ["reply"],
                 referencedPostIds: ["1"],
+                referencedAuthorHandle: null,
                 rawResult: {},
               },
             ],
@@ -135,6 +142,7 @@ function createPost(
   createdAt: string,
   types: string[] = ["original"],
   referencedPostIds: string[] = [],
+  referencedAuthorHandle: string | null = null,
 ): NewTargetPost {
   return {
     id,
@@ -143,5 +151,6 @@ function createPost(
     authorHandle: "example",
     typesJson: JSON.stringify(types),
     referencedPostIdsJson: JSON.stringify(referencedPostIds),
+    referencedAuthorHandle,
   };
 }

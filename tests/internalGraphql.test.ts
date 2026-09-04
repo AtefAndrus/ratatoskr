@@ -35,7 +35,16 @@ describe("X 内部 GraphQL", () => {
                         tweet(
                           "4",
                           {
-                            retweeted_status_result: { result: { rest_id: "40" } },
+                            retweeted_status_result: {
+                              result: {
+                                rest_id: "40",
+                                core: {
+                                  user_results: {
+                                    result: { core: { screen_name: "Origin_User" } },
+                                  },
+                                },
+                              },
+                            },
                             is_quote_status: true,
                           },
                           {
@@ -68,6 +77,12 @@ describe("X 内部 GraphQL", () => {
       { id: "4", types: ["repost"], references: ["40"] },
     ]);
     expect(posts.every((post) => post.authorHandle === "example")).toBe(true);
+    expect(posts.map((post) => post.referencedAuthorHandle)).toEqual([
+      null,
+      null,
+      null,
+      "origin_user",
+    ]);
     expect(posts.every((post) => post.createdAt === "2026-09-03T00:00:00.000Z")).toBe(true);
   });
 
