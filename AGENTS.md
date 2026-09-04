@@ -1,7 +1,7 @@
 # ratatoskr
 
 監視対象の X アカウントの投稿 URL を Discord チャンネルへ中継する Bot。
-概要と環境変数は [README.md](README.md)、デプロイは [docs/deployment.md](docs/deployment.md)、管理 API は [docs/admin-api.md](docs/admin-api.md) を参照する。
+概要と環境変数は [README.md](README.md)、Discord アプリと受信アカウントの設定は [docs/setup.md](docs/setup.md)、デプロイは [docs/deployment.md](docs/deployment.md)、管理 API は [docs/admin-api.md](docs/admin-api.md) を参照する。
 
 ## Commands
 
