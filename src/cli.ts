@@ -3,6 +3,7 @@ import { openDatabase } from "./db";
 import { ReceiverRepository } from "./db/repositories/receivers";
 import { RouteRepository } from "./db/repositories/routes";
 import { TargetRepository } from "./db/repositories/targets";
+import { upsertEnvValue } from "./utils/envFile";
 import { readHiddenLine } from "./utils/hiddenInput";
 import { X_WEB_BEARER_TOKEN } from "./x/credentials";
 
@@ -14,6 +15,7 @@ const USAGE = `使用方法:
   bun run cli receiver:disable <label>  受信用 X アカウントを無効にする
   bun run cli receiver:remove <label>   受信用 X アカウントを削除する
   bun run cli watch:list                監視対象と投稿先チャンネルの一覧を表示する
+  bun run cli env:set <NAME> [file]     値を非表示入力して .env.local (既定) に書き込む
 
 認証情報は対話端末では非表示入力で受け取る。端末が無い場合は環境変数 X_AUTH_TOKEN と X_CT0 から読む。`;
 
@@ -31,6 +33,15 @@ try {
 async function main(name: string | undefined, rest: string[]): Promise<void> {
   if (name === undefined || name === "help" || name === "--help") {
     console.log(USAGE);
+    return;
+  }
+  if (name === "env:set") {
+    const variable = requireArgument(rest[0], "環境変数名");
+    const file = rest[1] ?? ".env.local";
+    const value = await readHiddenLine(`${variable}: `);
+    if (value.length === 0) throw new Error("空の値は保存できません");
+    await upsertEnvValue(file, variable, value);
+    console.log(`${variable} を ${file} に保存しました。`);
     return;
   }
   const db = openDatabase(databasePath);
