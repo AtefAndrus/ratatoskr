@@ -58,7 +58,7 @@ X (内部 GraphQL) ◀──適応ポーリング── 受信アカウント �
 
 | コマンド | 説明 |
 | -------- | ---- |
-| `/watch add account:<X アカウント名> [channel:<チャンネル>] [posts/quotes/reposts/replies:<true か false>]` | 監視対象を追加し、投稿先チャンネルを紐づける。チャンネル省略時は実行したチャンネル。登録済みの組に再実行すると種別の設定だけを更新する |
+| `/watch add account:<X アカウント名> [channel:<チャンネル>] [posts/quotes/reposts/replies:<true か false>]` | 監視対象を追加し、投稿先チャンネルを紐づける。アカウント名は登録済みのものが候補に出るが自由入力もできる。チャンネル省略時は実行したチャンネル。登録済みの組に再実行すると、指定した種別だけを更新する |
 | `/watch remove account:<X アカウント名> [channel:<チャンネル>]` | 紐づけを削除する。アカウント名は登録済みのものから補完で選べる |
 | `/watch list` | このサーバーの監視対象、投稿先チャンネル、投稿 URL のドメイン設定を表示する |
 | `/watch domain [domain:<x.com か fixupx.com か fixvx.com>]` | 投稿 URL のドメインをサーバー単位で設定する。省略時は現在の設定を表示する |
