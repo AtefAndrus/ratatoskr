@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # bun の版が mise.toml (SSOT)、Dockerfile、bun.lock の bun-types で完全一致するか検証する。
+      # 開発と CI は mise.toml、本番は Dockerfile の base image が bun を決める。
+      # どちらも exact 指定を要求し、片側だけが浮動指定へ戻った時点で落とす。
+      - name: bun version drift check (mise SSOT)
+        run: |
+          mise_v=$(sed -nE 's/^bun[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*$/\1/p' mise.toml)
+          docker_v=$(sed -nE 's#^FROM oven/bun:([0-9]+\.[0-9]+\.[0-9]+)-slim@.*#\1#p' Dockerfile | head -n1)
+          types_v=$(sed -nE 's/^[[:space:]]*"bun-types": \["bun-types@([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' bun.lock | head -n1)
+          echo "mise=$mise_v dockerfile=$docker_v bun-types=$types_v"
+          if [ -z "$mise_v" ] || [ -z "$docker_v" ] || [ -z "$types_v" ]; then
+            echo "::error::bun version must be pinned to an exact patch in mise.toml, Dockerfile and bun.lock"; exit 1
+          fi
+          if [ "$mise_v" != "$docker_v" ] || [ "$mise_v" != "$types_v" ]; then
+            echo "::error::bun version drift (mise=$mise_v dockerfile=$docker_v bun-types=$types_v)"; exit 1
+          fi
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: "2026.8.14"
+          install_args: bun
+      - run: bun install --frozen-lockfile
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run lint:md
+
+  actions-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" --workdir /repo \
+            docker.io/rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+      - uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          version: "1.29.0"
+          advanced-security: false
+          online-audits: false
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build -t ratatoskr:ci .

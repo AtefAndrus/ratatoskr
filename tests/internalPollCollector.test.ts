@@ -1,0 +1,147 @@
+import { describe, expect, test } from "bun:test";
+
+import type { NewTargetPost } from "../src/db/repositories/internalGraphql";
+import {
+  deliverNewInternalPosts,
+  InternalPollCollector,
+} from "../src/pipeline/internalPollCollector";
+import { DeliveryService } from "../src/services/deliveryService";
+import type { InternalTimelineFetchResult, XInternalGraphqlClient } from "../src/x/internalGraphql";
+import {
+  addReceiver,
+  addTarget,
+  createRecordingSender,
+  createTestContext,
+} from "./helpers/database";
+
+describe("内部 GraphQL からの Discord 通知", () => {
+  test("起動前の初出投稿は保存対象に留め、起動後の投稿だけを送る", async () => {
+    const context = createTestContext();
+    try {
+      const target = addTarget(context, { handle: "example" });
+      context.routes.add({ targetId: target, guildId: "g", channelId: "discord-channel" });
+      const sender = createRecordingSender();
+      const result = await deliverNewInternalPosts({
+        delivery: new DeliveryService(context.routes, context.deliveries, sender),
+        target: { id: target, handle: "example" },
+        posts: [
+          createPost(1, "100", "2026-09-04T00:00:00.000Z"),
+          createPost(2, "101", "2026-09-04T00:01:00.000Z"),
+        ],
+        deliveryNotBefore: "2026-09-04T00:00:30.000Z",
+        attemptedAt: "2026-09-04T00:01:10.000Z",
+      });
+
+      expect(result).toEqual({ sent: 1, failed: 0, skipped: 0, suppressed: 1 });
+      expect(sender.sent).toEqual(["discord-channel:https://x.com/example/status/101"]);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("リポストは参照元の投稿 URL を送る", async () => {
+    const context = createTestContext();
+    try {
+      const target = addTarget(context, { handle: "example" });
+      context.routes.add({ targetId: target, guildId: "g", channelId: "discord-channel" });
+      const sender = createRecordingSender();
+      await deliverNewInternalPosts({
+        delivery: new DeliveryService(context.routes, context.deliveries, sender),
+        target: { id: target, handle: "example" },
+        posts: [createPost(1, "200", "2026-09-04T00:01:00.000Z", ["repost"], ["199"])],
+        deliveryNotBefore: "2026-09-04T00:00:30.000Z",
+        attemptedAt: "2026-09-04T00:01:10.000Z",
+      });
+      expect(sender.sent).toEqual(["discord-channel:https://x.com/i/web/status/199"]);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("収集ループは DB の監視対象を読み直し、観測を保存して新規投稿を配信する", async () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const target = addTarget(context, { userId: "42", handle: "example" });
+      context.routes.add({ targetId: target, guildId: "g", channelId: "c1" });
+      const sender = createRecordingSender();
+      const controller = new AbortController();
+      const fetched: string[] = [];
+      const client = {
+        async fetchUserTweetsAndReplies(input: {
+          userId: string;
+          handle: string;
+        }): Promise<InternalTimelineFetchResult> {
+          fetched.push(input.handle);
+          controller.abort();
+          return {
+            fetchedAt: "2026-09-05T00:00:00.000Z",
+            completedAt: "2026-09-05T00:00:00.500Z",
+            queryId: "q",
+            endpoint: "https://x.com/i/api/graphql/q/UserTweetsAndReplies",
+            variables: { userId: input.userId },
+            features: {},
+            transactionId: null,
+            responseStatus: 200,
+            responseText: "{}",
+            rateLimitLimit: 50,
+            rateLimitRemaining: 49,
+            rateLimitResetAt: null,
+            error: null,
+            parseError: null,
+            posts: [
+              {
+                postId: "500",
+                createdAt: "2026-09-05T00:00:00.000Z",
+                authorUserId: "42",
+                authorHandle: "example",
+                types: ["reply"],
+                referencedPostIds: ["1"],
+                rawResult: {},
+              },
+            ],
+          };
+        },
+      } as unknown as XInternalGraphqlClient;
+      const collector = new InternalPollCollector({
+        receiverId,
+        receiverLabel: "receiver-a",
+        client,
+        targets: context.targets,
+        observations: context.observations,
+        delivery: new DeliveryService(context.routes, context.deliveries, sender),
+        deliveryNotBefore: "2026-09-04T00:00:00.000Z",
+      });
+
+      await collector.run(controller.signal);
+
+      expect(fetched).toEqual(["example"]);
+      expect(sender.sent).toEqual(["c1:https://x.com/example/status/500"]);
+      expect(collector.snapshot()).toMatchObject({
+        targets: ["example"],
+        rateLimitRemaining: 49,
+        lastError: null,
+      });
+      expect(context.observations.listRecent(10)).toHaveLength(1);
+    } finally {
+      context.db.close();
+    }
+  });
+});
+
+function createPost(
+  id: number,
+  postId: string,
+  createdAt: string,
+  types: string[] = ["original"],
+  referencedPostIds: string[] = [],
+): NewTargetPost {
+  return {
+    id,
+    postId,
+    createdAt,
+    authorHandle: "example",
+    typesJson: JSON.stringify(types),
+    referencedPostIdsJson: JSON.stringify(referencedPostIds),
+  };
+}

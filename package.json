@@ -1,0 +1,37 @@
+{
+  "name": "ratatoskr",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Relays posts from watched X accounts to Discord channels via Web Push and X internal GraphQL",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "cli": "bun run src/cli.ts",
+    "test": "bun typecheck && bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --type-aware",
+    "lint:fix": "oxlint --type-aware --fix",
+    "lint:md": "markdownlint-cli2 \"docs/**/*.md\" \"*.md\"",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "format:md": "markdownlint-cli2 --fix \"docs/**/*.md\" \"*.md\"",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run lint:md",
+    "changelog": "git-cliff --output CHANGELOG.md",
+    "prepare": "lefthook install"
+  },
+  "dependencies": {
+    "discord.js": "14.27.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "bun-types": "1.4.0",
+    "lefthook": "2.1.12",
+    "markdownlint-cli2": "0.23.2",
+    "oxfmt": "0.66.0",
+    "oxlint": "1.81.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "7.0.2"
+  }
+}
