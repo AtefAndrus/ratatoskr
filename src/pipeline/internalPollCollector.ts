@@ -163,6 +163,7 @@ export class InternalPollCollector {
         authorHandle: post.authorHandle,
         typesJson: JSON.stringify(post.types),
         referencedPostIdsJson: JSON.stringify(post.referencedPostIds),
+        referencedAuthorHandle: post.referencedAuthorHandle,
         rawResultJson: JSON.stringify(post.rawResult),
         isTargetAuthor: post.authorUserId === target.userId ? 1 : 0,
       })),
@@ -233,10 +234,18 @@ function isOnOrAfter(value: string | null, boundary: string): boolean {
   return Number.isFinite(valueMs) && Number.isFinite(boundaryMs) && valueMs >= boundaryMs;
 }
 
-/** リポストは元投稿の URL を送る。通知主体側の投稿 ID は重複排除にだけ使う。 */
+/**
+ * リポストは元投稿の URL を送る。通知主体側の投稿 ID は重複排除にだけ使う。
+ * 元投稿者のハンドルが取れなかった場合だけ、投稿者に依存しない /i/web/status/ 形式に落とす。
+ */
 export function internalPostUrl(
   targetHandle: string,
-  post: { postId: string; typesJson: string; referencedPostIdsJson: string },
+  post: {
+    postId: string;
+    typesJson: string;
+    referencedPostIdsJson: string;
+    referencedAuthorHandle: string | null;
+  },
 ): string {
   const types = JSON.parse(post.typesJson) as unknown;
   const referencedPostIds = JSON.parse(post.referencedPostIdsJson) as unknown;
@@ -246,7 +255,9 @@ export function internalPostUrl(
     Array.isArray(referencedPostIds) &&
     typeof referencedPostIds[0] === "string"
   ) {
-    return `https://x.com/i/web/status/${referencedPostIds[0]}`;
+    return post.referencedAuthorHandle === null
+      ? `https://x.com/i/web/status/${referencedPostIds[0]}`
+      : `https://x.com/${post.referencedAuthorHandle}/status/${referencedPostIds[0]}`;
   }
   return `https://x.com/${targetHandle}/status/${post.postId}`;
 }

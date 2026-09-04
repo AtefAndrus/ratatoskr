@@ -20,6 +20,8 @@ export interface InternalTimelinePost {
   authorHandle: string | null;
   types: InternalPostType[];
   referencedPostIds: string[];
+  /** リポストのとき、元投稿の投稿者ハンドル。URL を通常投稿と同じ形にするために使う。 */
+  referencedAuthorHandle: string | null;
   rawResult: unknown;
 }
 
@@ -222,6 +224,9 @@ export function extractTimelinePosts(payload: unknown): InternalTimelinePost[] {
       referencedPostIds: [
         ...new Set(referencedPostIds.filter((value): value is string => typeof value === "string")),
       ],
+      referencedAuthorHandle: types.includes("repost")
+        ? readNestedAuthorHandle(legacy.retweeted_status_result)
+        : null,
       rawResult: raw,
     });
   }
@@ -257,6 +262,18 @@ function collectEntryResults(value: unknown, output: unknown[]): void {
 function unwrapTweetResult(value: unknown): unknown {
   if (isObject(value) && isObject(value.tweet)) return value.tweet;
   return value;
+}
+
+function readNestedAuthorHandle(value: unknown): string | null {
+  if (!isObject(value)) return null;
+  const result = unwrapTweetResult(value.result);
+  if (!isObject(result) || !isObject(result.core)) return null;
+  const userResults = result.core.user_results;
+  const user = isObject(userResults) && isObject(userResults.result) ? userResults.result : null;
+  if (user === null) return null;
+  const userCore = isObject(user.core) ? user.core : null;
+  const userLegacy = isObject(user.legacy) ? user.legacy : null;
+  return readFirstString(userCore?.screen_name, userLegacy?.screen_name)?.toLowerCase() ?? null;
 }
 
 function readNestedRestId(value: unknown): string | null {

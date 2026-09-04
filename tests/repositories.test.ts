@@ -191,6 +191,7 @@ describe("observations と保持期間", () => {
           authorHandle: "example",
           typesJson: '["original"]',
           referencedPostIdsJson: "[]",
+          referencedAuthorHandle: null,
           rawResultJson: '{"rest_id":"100"}',
           isTargetAuthor: 1,
         },

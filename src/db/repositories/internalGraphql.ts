@@ -26,6 +26,7 @@ export interface NewObservationPost {
   authorHandle: string | null;
   typesJson: string;
   referencedPostIdsJson: string;
+  referencedAuthorHandle: string | null;
   rawResultJson: string;
   isTargetAuthor: number;
 }
@@ -37,6 +38,7 @@ export interface NewTargetPost {
   authorHandle: string | null;
   typesJson: string;
   referencedPostIdsJson: string;
+  referencedAuthorHandle: string | null;
 }
 
 export interface ObservationView {
@@ -102,10 +104,12 @@ export class InternalGraphqlRepository {
     const insertPost = this.db.query(
       `INSERT INTO internal_graphql_observation_posts (
          observation_id, post_id, created_at, author_user_id, author_handle,
-         types_json, referenced_post_ids_json, raw_result_json, is_new, is_target_author
+         types_json, referenced_post_ids_json, referenced_author_handle, raw_result_json,
+         is_new, is_target_author
        ) VALUES (
          $observationId, $postId, $createdAt, $authorUserId, $authorHandle,
-         $typesJson, $referencedPostIdsJson, $rawResultJson, $isNew, $isTargetAuthor
+         $typesJson, $referencedPostIdsJson, $referencedAuthorHandle, $rawResultJson,
+         $isNew, $isTargetAuthor
        )
        RETURNING id`,
     );
@@ -136,6 +140,7 @@ export class InternalGraphqlRepository {
             authorHandle: post.authorHandle,
             typesJson: post.typesJson,
             referencedPostIdsJson: post.referencedPostIdsJson,
+            referencedAuthorHandle: post.referencedAuthorHandle,
           });
         }
       }
@@ -207,7 +212,8 @@ export class InternalGraphqlRepository {
       .query(
         `SELECT id, post_id AS postId, created_at AS createdAt, author_user_id AS authorUserId,
                 author_handle AS authorHandle, types_json AS typesJson,
-                referenced_post_ids_json AS referencedPostIdsJson, raw_result_json AS rawResultJson,
+                referenced_post_ids_json AS referencedPostIdsJson,
+                referenced_author_handle AS referencedAuthorHandle, raw_result_json AS rawResultJson,
                 is_new AS isNew, is_target_author AS isTargetAuthor
          FROM internal_graphql_observation_posts
          WHERE observation_id = $observationId
