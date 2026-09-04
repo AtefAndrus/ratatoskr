@@ -2,6 +2,7 @@ import type { AutopushNotification } from "../autopush/protocol";
 import type { NotificationRepository } from "../db/repositories/notifications";
 import type { TargetRepository } from "../db/repositories/targets";
 import { PARSER_VERSION, parseXNotification } from "../notification/parser";
+import type { PostKind } from "../postKinds";
 import type { DeliveryService } from "../services/deliveryService";
 import { isPostOnOrAfter } from "../services/deliveryService";
 import { decodeBase64url } from "../utils/base64url";
@@ -17,6 +18,11 @@ export interface WebPushPipelineDependencies {
   delivery: DeliveryService | null;
   /** この時刻より前に作成された投稿は保存だけして Discord へは送らない (起動時のバックログ抑止)。 */
   deliveryNotBefore: string;
+  /**
+   * 通常投稿と引用を区別する必要があるときだけ呼ばれ、投稿 ID から種別を確定する。
+   * 未指定なら通常投稿か引用のどちらかとして扱い、どちらかを許可する経路へ送る。
+   */
+  classifyPost?: (postId: string) => Promise<readonly PostKind[]>;
 }
 
 /**
@@ -139,12 +145,22 @@ export class WebPushPipeline {
       metrics.increment("webpush.suppressed_backlog");
       return 100;
     }
+    // URI の投稿者が監視対象と違えばリポスト。同じなら通常投稿か引用で、ペイロードからは区別できない。
+    const isRepost = parsed.authorHandle !== null && parsed.authorHandle !== target.handle;
+    const originalPostId = parsed.postId;
+    const classifyPost = this.deps.classifyPost;
+    const kinds: readonly PostKind[] | (() => Promise<readonly PostKind[]>) = isRepost
+      ? ["reposts"]
+      : classifyPost === undefined
+        ? ["posts", "quotes"]
+        : () => classifyPost(originalPostId);
     const result = await this.deps.delivery.deliver({
       source: "webpush",
       sourceRecordId: notificationId,
       targetId: target.id,
       postId,
       postUrl: parsed.postUrl,
+      kinds,
     });
     return result.failed > 0 ? 102 : 100;
   }

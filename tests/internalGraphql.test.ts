@@ -111,7 +111,10 @@ describe("X 内部 GraphQL", () => {
       const url = String(input);
       if (url.endsWith("API.json")) {
         return Response.json({
-          graphql: { UserTweetsAndReplies: { queryId: "query-1", features: { flag: true } } },
+          graphql: {
+            UserTweetsAndReplies: { queryId: "query-1", features: { flag: true } },
+            TweetResultByRestId: { queryId: "lookup-1", features: {} },
+          },
         });
       }
       return Response.json([{ verification: "AQID", animationKey: "key" }]);
@@ -127,12 +130,12 @@ describe("X 内部 GraphQL", () => {
       () => nowMs,
     );
 
-    expect((await provider.get()).queryId).toBe("query-1");
-    expect((await provider.get()).queryId).toBe("query-1");
+    expect((await provider.get()).operations.UserTweetsAndReplies.queryId).toBe("query-1");
+    expect((await provider.get()).operations.UserTweetsAndReplies.queryId).toBe("query-1");
     expect(calls).toBe(2);
     nowMs = 2_000;
     fail = true;
-    expect((await provider.get()).queryId).toBe("query-1");
+    expect((await provider.get()).operations.UserTweetsAndReplies.queryId).toBe("query-1");
     expect(calls).toBe(3);
     expect(exchanges).toEqual([
       "x_internal_api_document",
@@ -157,8 +160,10 @@ describe("X 内部 GraphQL", () => {
     const client = new XInternalGraphqlClient(
       { authToken: "a", csrfToken: "c", bearerToken: "b" },
       async () => ({
-        queryId: "query-2",
-        features: { flag: false },
+        operations: {
+          UserTweetsAndReplies: { queryId: "query-2", features: { flag: false } },
+          TweetResultByRestId: { queryId: "lookup-2", features: {} },
+        },
         pairs: [{ verification: "AQID", animationKey: "k" }],
       }),
       fetchImplementation,

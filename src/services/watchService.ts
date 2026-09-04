@@ -1,13 +1,15 @@
 import { normalizeHandle } from "../db/handle";
 import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/guildSettings";
 import type { ReceiverRepository } from "../db/repositories/receivers";
-import type { RouteRepository, RouteWithTarget } from "../db/repositories/routes";
+import type { RouteRecord, RouteRepository, RouteWithTarget } from "../db/repositories/routes";
 import type { TargetRecord, TargetRepository } from "../db/repositories/targets";
+import type { RouteKinds } from "../postKinds";
 import { logger } from "../utils/logger";
 import type { ReceiverSupervisor } from "./receiverSupervisor";
 
 export interface WatchAddResult {
   target: TargetRecord;
+  route: RouteRecord;
   created: boolean;
   configuredBy: string;
 }
@@ -37,6 +39,7 @@ export class WatchService {
     guildId: string;
     channelId: string;
     requestedBy?: string;
+    kinds?: Partial<RouteKinds>;
   }): Promise<WatchAddResult> {
     const handle = normalizeHandle(input.handle);
     const receivers = this.receivers.listEnabled();
@@ -52,20 +55,22 @@ export class WatchService {
         const configured = await this.supervisor.configureTarget(receiver, handle);
         const target = this.targets.upsert(configured);
         this.targets.markReceiverConfigured(receiver.id, target.id);
-        const { created } = this.routes.add({
+        const { route, created } = this.routes.add({
           targetId: target.id,
           guildId: input.guildId,
           channelId: input.channelId,
           createdBy: input.requestedBy,
+          kinds: input.kinds,
         });
         this.supervisor.requestReconcile();
         logger.info("Watch route added", {
           target: target.handle,
           channelId: input.channelId,
           created,
+          kinds: route.kinds,
           receiver: receiver.label,
         });
-        return { target, created, configuredBy: receiver.label };
+        return { target, route, created, configuredBy: receiver.label };
       } catch (error) {
         lastError = error;
         logger.warn("Target configuration failed on receiver", {

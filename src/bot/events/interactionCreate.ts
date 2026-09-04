@@ -7,6 +7,7 @@ import {
 } from "discord.js";
 
 import { isLinkDomain } from "../../db/repositories/guildSettings";
+import { describeKinds, POST_KINDS, type RouteKinds } from "../../postKinds";
 import { WatchServiceError, type WatchService } from "../../services/watchService";
 import { logger } from "../../utils/logger";
 import { metrics } from "../../utils/metrics";
@@ -89,7 +90,10 @@ async function handleWatch(
       lines.push("監視対象はありません。");
     } else {
       lines.push(
-        ...routes.map((route) => `@${route.handle} (${route.displayName}) → <#${route.channelId}>`),
+        ...routes.map(
+          (route) =>
+            `@${route.handle} (${route.displayName}) → <#${route.channelId}> [${describeKinds(route.kinds)}]`,
+        ),
       );
     }
     await interaction.reply({
@@ -148,15 +152,21 @@ async function handleWatch(
       });
       return;
     }
+    const kinds: Partial<RouteKinds> = {};
+    for (const kind of POST_KINDS) {
+      const value = interaction.options.getBoolean(kind);
+      if (value !== null) kinds[kind] = value;
+    }
     const result = await watchService.add({
       handle: account,
       guildId: interaction.guildId,
       channelId: channel.id,
       requestedBy: interaction.user.id,
+      kinds,
     });
-    const verb = result.created ? "追加しました" : "は登録済みです";
+    const verb = result.created ? "を追加しました" : "の設定を更新しました";
     await interaction.editReply({
-      content: `@${result.target.handle} (${result.target.displayName}) → <#${channel.id}> ${verb}。`,
+      content: `@${result.target.handle} (${result.target.displayName}) → <#${channel.id}> ${verb} [${describeKinds(result.route.kinds)}]。`,
       allowedMentions: { parse: [] },
     });
     return;

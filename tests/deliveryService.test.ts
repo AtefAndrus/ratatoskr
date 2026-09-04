@@ -15,6 +15,7 @@ describe("DeliveryService", () => {
         targetId: target,
         postId: "123",
         postUrl: "https://x.com/cloudflare/status/123",
+        kinds: ["posts"] as const,
       };
 
       const results = await Promise.all([
@@ -24,8 +25,8 @@ describe("DeliveryService", () => {
 
       expect(sender.sent).toEqual(["discord-channel:https://x.com/cloudflare/status/123"]);
       expect(results).toEqual([
-        { sent: 1, failed: 0, skipped: 0 },
-        { sent: 0, failed: 0, skipped: 1 },
+        { sent: 1, failed: 0, skipped: 0, filtered: 0 },
+        { sent: 0, failed: 0, skipped: 1, filtered: 0 },
       ]);
       expect(
         context.deliveries
@@ -57,11 +58,12 @@ describe("DeliveryService", () => {
         targetId: target,
         postId: "1",
         postUrl: "u",
+        kinds: ["posts"] as const,
       };
 
-      expect(await service.deliver(post)).toEqual({ sent: 0, failed: 1, skipped: 0 });
+      expect(await service.deliver(post)).toEqual({ sent: 0, failed: 1, skipped: 0, filtered: 0 });
       shouldFail = false;
-      expect(await service.deliver(post)).toEqual({ sent: 1, failed: 0, skipped: 0 });
+      expect(await service.deliver(post)).toEqual({ sent: 1, failed: 0, skipped: 0, filtered: 0 });
       expect(context.deliveries.listRecent(10, "failed")).toHaveLength(1);
     } finally {
       context.db.close();
@@ -85,6 +87,7 @@ describe("DeliveryService", () => {
         targetId: a,
         postId: "1",
         postUrl: "a1",
+        kinds: ["posts"],
       });
       await service.deliver({
         source: "webpush",
@@ -92,6 +95,7 @@ describe("DeliveryService", () => {
         targetId: b,
         postId: "2",
         postUrl: "b2",
+        kinds: ["posts"],
       });
 
       expect(sender.sent).toEqual(["c1:a1", "c2:a1", "c1:b2"]);

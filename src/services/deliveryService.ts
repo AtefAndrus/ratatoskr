@@ -1,6 +1,7 @@
 import type { DeliveryRepository, DeliverySource } from "../db/repositories/deliveries";
 import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/guildSettings";
 import type { RouteRecord, RouteRepository } from "../db/repositories/routes";
+import { isKindAllowed, type PostKind, type RouteKinds } from "../postKinds";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
 
@@ -12,7 +13,15 @@ export interface DeliveryResult {
   sent: number;
   failed: number;
   skipped: number;
+  /** 経路の種別設定で送らなかった件数。 */
+  filtered: number;
 }
+
+/**
+ * 投稿の種別。確定していれば配列、Web Push のように通常投稿と引用を区別できない場合は
+ * 必要になったときだけ呼ばれる解決関数を渡す。
+ */
+export type PostKindsSource = readonly PostKind[] | (() => Promise<readonly PostKind[]>);
 
 export interface DeliverablePost {
   source: DeliverySource;
@@ -21,6 +30,7 @@ export interface DeliverablePost {
   /** 通知主体側の投稿 ID。リポストでは元投稿ではなくリポスト自体の ID で、重複排除キーに使う。 */
   postId: string;
   postUrl: string;
+  kinds: PostKindsSource;
 }
 
 export function xSnowflakeTimestampMs(postId: string): number | null {
@@ -69,8 +79,14 @@ export class DeliveryService {
     attemptedAt = new Date().toISOString(),
   ): Promise<DeliveryResult> {
     const routes = dedupeByChannel(this.routes.listEnabledByTarget(post.targetId));
-    const result: DeliveryResult = { sent: 0, failed: 0, skipped: 0 };
+    const result: DeliveryResult = { sent: 0, failed: 0, skipped: 0, filtered: 0 };
+    const kinds = new KindsResolver(post.kinds);
     for (const route of routes) {
+      if (!(await kinds.isAllowed(route.kinds))) {
+        metrics.increment("delivery.filtered");
+        result.filtered += 1;
+        continue;
+      }
       const dedupeKey = `post:${post.postId}`;
       const claimed = this.deliveries.claim({
         source: post.source,
@@ -133,6 +149,27 @@ export class DeliveryService {
       }
     }
     return result;
+  }
+}
+
+/**
+ * 種別の解決を経路の設定が本当に必要とするときまで遅らせる。
+ * 通常投稿と引用の扱いが同じ経路なら、どちらであっても結果は変わらないので解決関数を呼ばない。
+ * 解決に失敗したときは通常投稿と引用の両方の可能性を残し、どちらかを許可していれば送る (取りこぼしより重複の方が軽いため)。
+ */
+class KindsResolver {
+  private resolved: Promise<readonly PostKind[]> | null = null;
+
+  constructor(private readonly source: PostKindsSource) {}
+
+  async isAllowed(routeKinds: RouteKinds): Promise<boolean> {
+    if (typeof this.source !== "function") return isKindAllowed(routeKinds, this.source);
+    if (routeKinds.posts === routeKinds.quotes) return routeKinds.posts;
+    this.resolved ??= this.source().catch((error: unknown) => {
+      logger.warn("Post kind resolution failed; treating as post or quote", { error });
+      return ["posts", "quotes"] as const;
+    });
+    return isKindAllowed(routeKinds, await this.resolved);
   }
 }
 

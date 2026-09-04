@@ -9,7 +9,9 @@ const API_DOCUMENT_URL =
   "https://raw.githubusercontent.com/fa0311/TwitterInternalAPIDocument/refs/heads/develop/docs/json/API.json";
 const TRANSACTION_PAIRS_URL =
   "https://raw.githubusercontent.com/fa0311/x-client-transaction-pair-dict/refs/heads/main/pair.json";
-const OPERATION_NAME = "UserTweetsAndReplies";
+
+export const OPERATION_NAMES = ["UserTweetsAndReplies", "TweetResultByRestId"] as const;
+export type OperationName = (typeof OPERATION_NAMES)[number];
 
 export type InternalPostType = "original" | "reply" | "quote" | "repost";
 
@@ -25,13 +27,17 @@ export interface InternalTimelinePost {
   rawResult: unknown;
 }
 
-export interface InternalGraphqlConfiguration {
+export interface InternalGraphqlOperation {
   queryId: string;
   features: Record<string, boolean>;
+}
+
+export interface InternalGraphqlConfiguration {
+  operations: Record<OperationName, InternalGraphqlOperation>;
   pairs: TransactionPair[];
 }
 
-export interface InternalTimelineFetchResult {
+interface InternalGraphqlResponse {
   fetchedAt: string;
   completedAt: string;
   queryId: string;
@@ -45,8 +51,16 @@ export interface InternalTimelineFetchResult {
   rateLimitRemaining: number | null;
   rateLimitResetAt: string | null;
   error: string | null;
+}
+
+export interface InternalTimelineFetchResult extends InternalGraphqlResponse {
   parseError: string | null;
   posts: InternalTimelinePost[];
+}
+
+export interface InternalTweetLookupResult extends InternalGraphqlResponse {
+  parseError: string | null;
+  post: InternalTimelinePost | null;
 }
 
 export interface InternalTimelineTarget {
@@ -79,24 +93,71 @@ export class XInternalGraphqlClient {
   async fetchUserTweetsAndReplies(
     target: InternalTimelineTarget,
   ): Promise<InternalTimelineFetchResult> {
+    const response = await this.request({
+      operation: "UserTweetsAndReplies",
+      variables: {
+        userId: target.userId,
+        count: 20,
+        includePromotedContent: false,
+        withCommunity: true,
+        withVoice: true,
+        withV2Timeline: true,
+      },
+      fieldToggles: { withArticlePlainText: false },
+      referer: `https://x.com/${target.handle}/with_replies`,
+    });
+    let posts: InternalTimelinePost[] = [];
+    let parseError: string | null = null;
+    if (response.error === null && response.responseText !== null) {
+      try {
+        posts = extractTimelinePosts(JSON.parse(response.responseText));
+      } catch (failure) {
+        parseError = errorMessage(failure);
+      }
+    }
+    return { ...response, parseError, posts };
+  }
+
+  /** 投稿 1 件を引いて種別を確定する。Web Push では通常投稿と引用を区別できないときに使う。 */
+  async fetchTweetResult(postId: string): Promise<InternalTweetLookupResult> {
+    const response = await this.request({
+      operation: "TweetResultByRestId",
+      variables: {
+        tweetId: postId,
+        withCommunity: false,
+        includePromotedContent: false,
+        withVoice: false,
+      },
+      fieldToggles: { withArticlePlainText: false },
+      referer: `https://x.com/i/web/status/${postId}`,
+    });
+    let post: InternalTimelinePost | null = null;
+    let parseError: string | null = null;
+    if (response.error === null && response.responseText !== null) {
+      try {
+        post = extractTweetResult(JSON.parse(response.responseText));
+        if (post === null) parseError = "応答に投稿が含まれていません";
+      } catch (failure) {
+        parseError = errorMessage(failure);
+      }
+    }
+    return { ...response, parseError, post };
+  }
+
+  private async request(input: {
+    operation: OperationName;
+    variables: Record<string, unknown>;
+    fieldToggles: Record<string, boolean>;
+    referer: string;
+  }): Promise<InternalGraphqlResponse> {
     const fetchedAt = new Date().toISOString();
     const configuration =
       typeof this.configuration === "function" ? await this.configuration() : this.configuration;
-    const variables = {
-      userId: target.userId,
-      count: 20,
-      includePromotedContent: false,
-      withCommunity: true,
-      withVoice: true,
-      withV2Timeline: true,
-    };
-    const url = new URL(
-      `/i/api/graphql/${configuration.queryId}/${OPERATION_NAME}`,
-      "https://x.com",
-    );
-    url.searchParams.set("variables", JSON.stringify(variables));
-    url.searchParams.set("features", JSON.stringify(configuration.features));
-    url.searchParams.set("fieldToggles", JSON.stringify({ withArticlePlainText: false }));
+    const operation = configuration.operations[input.operation];
+    const url = new URL(`/i/api/graphql/${operation.queryId}/${input.operation}`, "https://x.com");
+    url.searchParams.set("variables", JSON.stringify(input.variables));
+    url.searchParams.set("features", JSON.stringify(operation.features));
+    url.searchParams.set("fieldToggles", JSON.stringify(input.fieldToggles));
     const pair = configuration.pairs[Math.floor(this.random() * configuration.pairs.length)]!;
     let transactionId: string | null = null;
     let responseStatus: number | null = null;
@@ -105,8 +166,6 @@ export class XInternalGraphqlClient {
     let rateLimitRemaining: number | null = null;
     let rateLimitResetAt: string | null = null;
     let error: string | null = null;
-    let parseError: string | null = null;
-    let posts: InternalTimelinePost[] = [];
     try {
       transactionId = await generateClientTransactionId("GET", url.pathname, pair);
       const response = await this.fetchImplementation(url, {
@@ -115,7 +174,7 @@ export class XInternalGraphqlClient {
           Authorization: normalizeBearer(this.credentials.bearerToken),
           Cookie: `auth_token=${this.credentials.authToken}; ct0=${this.credentials.csrfToken}`,
           Origin: "https://x.com",
-          Referer: `https://x.com/${target.handle}/with_replies`,
+          Referer: input.referer,
           "x-client-transaction-id": transactionId,
           "x-csrf-token": this.credentials.csrfToken,
           "x-twitter-active-user": "yes",
@@ -129,25 +188,17 @@ export class XInternalGraphqlClient {
       rateLimitLimit = parseIntegerHeader(response.headers.get("x-rate-limit-limit"));
       rateLimitRemaining = parseIntegerHeader(response.headers.get("x-rate-limit-remaining"));
       rateLimitResetAt = parseResetHeader(response.headers.get("x-rate-limit-reset"));
-      if (response.ok) {
-        try {
-          posts = extractTimelinePosts(JSON.parse(responseText));
-        } catch (parseFailure) {
-          parseError = errorMessage(parseFailure);
-        }
-      } else {
-        error = `X内部GraphQL APIがHTTP ${response.status}を返しました`;
-      }
+      if (!response.ok) error = `X内部GraphQL APIがHTTP ${response.status}を返しました`;
     } catch (requestFailure) {
       error = errorMessage(requestFailure);
     }
     return {
       fetchedAt,
       completedAt: new Date().toISOString(),
-      queryId: configuration.queryId,
+      queryId: operation.queryId,
       endpoint: url.toString(),
-      variables,
-      features: configuration.features,
+      variables: input.variables,
+      features: operation.features,
       transactionId,
       responseStatus,
       responseText,
@@ -155,8 +206,6 @@ export class XInternalGraphqlClient {
       rateLimitRemaining,
       rateLimitResetAt,
       error,
-      parseError,
-      posts,
     };
   }
 }
@@ -177,12 +226,11 @@ export async function loadInternalGraphqlConfiguration(
     "x_transaction_pairs",
     TRANSACTION_PAIRS_URL,
   );
-  const operation = readOperation(JSON.parse(apiDocument));
-  return {
-    queryId: operation.queryId,
-    features: operation.features,
-    pairs: parseTransactionPairs(JSON.parse(transactionPairs)),
-  };
+  const document = JSON.parse(apiDocument) as unknown;
+  const operations = Object.fromEntries(
+    OPERATION_NAMES.map((name) => [name, readOperation(document, name)]),
+  ) as Record<OperationName, InternalGraphqlOperation>;
+  return { operations, pairs: parseTransactionPairs(JSON.parse(transactionPairs)) };
 }
 
 export function extractTimelinePosts(payload: unknown): InternalTimelinePost[] {
@@ -190,47 +238,61 @@ export function extractTimelinePosts(payload: unknown): InternalTimelinePost[] {
   visitTimelineEntries(payload, results);
   const posts = new Map<string, InternalTimelinePost>();
   for (const raw of results) {
-    const result = unwrapTweetResult(raw);
-    if (!isObject(result) || typeof result.rest_id !== "string") continue;
-    const legacy = isObject(result.legacy) ? result.legacy : null;
-    if (legacy === null) continue;
-    const types: InternalPostType[] = [];
-    if (isObject(legacy.retweeted_status_result)) {
-      types.push("repost");
-    } else {
-      if (typeof legacy.in_reply_to_status_id_str === "string") types.push("reply");
-      if (legacy.is_quote_status === true || isObject(result.quoted_status_result))
-        types.push("quote");
-    }
-    if (types.length === 0) types.push("original");
-    const core = isObject(result.core) ? result.core : null;
-    const userResult =
-      core !== null && isObject(core.user_results) && isObject(core.user_results.result)
-        ? core.user_results.result
-        : null;
-    const userLegacy =
-      userResult !== null && isObject(userResult.legacy) ? userResult.legacy : null;
-    const userCore = userResult !== null && isObject(userResult.core) ? userResult.core : null;
-    const referencedPostIds = types.includes("repost")
-      ? [readNestedRestId(legacy.retweeted_status_result)]
-      : [legacy.in_reply_to_status_id_str, readNestedRestId(result.quoted_status_result)];
-    posts.set(result.rest_id, {
-      postId: result.rest_id,
-      createdAt: parseXDate(legacy.created_at),
-      authorUserId: typeof legacy.user_id_str === "string" ? legacy.user_id_str : null,
-      authorHandle:
-        readFirstString(userCore?.screen_name, userLegacy?.screen_name)?.toLowerCase() ?? null,
-      types,
-      referencedPostIds: [
-        ...new Set(referencedPostIds.filter((value): value is string => typeof value === "string")),
-      ],
-      referencedAuthorHandle: types.includes("repost")
-        ? readNestedAuthorHandle(legacy.retweeted_status_result)
-        : null,
-      rawResult: raw,
-    });
+    const post = classifyTweetResult(raw);
+    if (post !== null) posts.set(post.postId, post);
   }
   return [...posts.values()];
+}
+
+/** TweetResultByRestId の応答 (`data.tweetResult.result`) から投稿 1 件を取り出す。 */
+export function extractTweetResult(payload: unknown): InternalTimelinePost | null {
+  if (!isObject(payload) || !isObject(payload.data) || !isObject(payload.data.tweetResult)) {
+    return null;
+  }
+  return classifyTweetResult(payload.data.tweetResult.result);
+}
+
+/** 投稿の生 JSON から ID、投稿者、種別 (通常/返信/引用/リポスト) を読み取る。 */
+export function classifyTweetResult(raw: unknown): InternalTimelinePost | null {
+  const result = unwrapTweetResult(raw);
+  if (!isObject(result) || typeof result.rest_id !== "string") return null;
+  const legacy = isObject(result.legacy) ? result.legacy : null;
+  if (legacy === null) return null;
+  const types: InternalPostType[] = [];
+  if (isObject(legacy.retweeted_status_result)) {
+    types.push("repost");
+  } else {
+    if (typeof legacy.in_reply_to_status_id_str === "string") types.push("reply");
+    if (legacy.is_quote_status === true || isObject(result.quoted_status_result)) {
+      types.push("quote");
+    }
+  }
+  if (types.length === 0) types.push("original");
+  const core = isObject(result.core) ? result.core : null;
+  const userResult =
+    core !== null && isObject(core.user_results) && isObject(core.user_results.result)
+      ? core.user_results.result
+      : null;
+  const userLegacy = userResult !== null && isObject(userResult.legacy) ? userResult.legacy : null;
+  const userCore = userResult !== null && isObject(userResult.core) ? userResult.core : null;
+  const referencedPostIds = types.includes("repost")
+    ? [readNestedRestId(legacy.retweeted_status_result)]
+    : [legacy.in_reply_to_status_id_str, readNestedRestId(result.quoted_status_result)];
+  return {
+    postId: result.rest_id,
+    createdAt: parseXDate(legacy.created_at),
+    authorUserId: typeof legacy.user_id_str === "string" ? legacy.user_id_str : null,
+    authorHandle:
+      readFirstString(userCore?.screen_name, userLegacy?.screen_name)?.toLowerCase() ?? null,
+    types,
+    referencedPostIds: [
+      ...new Set(referencedPostIds.filter((value): value is string => typeof value === "string")),
+    ],
+    referencedAuthorHandle: types.includes("repost")
+      ? readNestedAuthorHandle(legacy.retweeted_status_result)
+      : null,
+    rawResult: raw,
+  };
 }
 
 function visitTimelineEntries(value: unknown, output: unknown[]): void {
@@ -357,17 +419,17 @@ async function fetchSource(
   }
 }
 
-function readOperation(value: unknown): { queryId: string; features: Record<string, boolean> } {
-  if (!isObject(value) || !isObject(value.graphql) || !isObject(value.graphql[OPERATION_NAME])) {
-    throw new Error(`${OPERATION_NAME}がAPI文書にありません`);
+function readOperation(document: unknown, name: OperationName): InternalGraphqlOperation {
+  if (!isObject(document) || !isObject(document.graphql) || !isObject(document.graphql[name])) {
+    throw new Error(`${name}がAPI文書にありません`);
   }
-  const operation = value.graphql[OPERATION_NAME];
+  const operation = document.graphql[name];
   if (typeof operation.queryId !== "string" || !isObject(operation.features)) {
-    throw new Error(`${OPERATION_NAME}のAPI文書形式が不正です`);
+    throw new Error(`${name}のAPI文書形式が不正です`);
   }
   const entries = Object.entries(operation.features);
   if (!entries.every((entry): entry is [string, boolean] => typeof entry[1] === "boolean")) {
-    throw new Error(`${OPERATION_NAME}のfeatures形式が不正です`);
+    throw new Error(`${name}のfeatures形式が不正です`);
   }
   return { queryId: operation.queryId, features: Object.fromEntries(entries) };
 }
