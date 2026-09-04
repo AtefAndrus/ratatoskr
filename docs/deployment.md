@@ -55,16 +55,19 @@ SQLite に受信アカウントの認証情報、Web Push 鍵、監視対象、�
 
 `.github/workflows/deploy.yml` は Release の公開時に Coolify の Deploy Webhook を呼ぶ。
 
-1. Coolify のアプリ設定 **Webhooks** で Deploy Webhook URL を控える。
-2. Coolify の **Keys & Tokens** → **API tokens** でトークンを発行する。
+1. Coolify のアプリ設定 **Webhooks** にある Deploy Webhook の URL を控える。形は `https://<Coolify のホスト>/api/v1/deploy?uuid=<アプリの UUID>&force=false` である。
+2. Coolify の **Security** → **API Tokens** で、権限に `deploy` を付けたトークンを発行する。トークンは作成時にしか表示されない。形は `67|...` のような文字列である。
 3. GitHub リポジトリの **Settings** → **Secrets and variables** → **Actions** に次を登録する。
 
 | Secret | 値 |
 | ------ | -- |
-| `COOLIFY_WEBHOOK` | Deploy Webhook URL |
-| `COOLIFY_TOKEN` | API token |
+| `COOLIFY_WEBHOOK` | Deploy Webhook の URL (`/api/v1/deploy?uuid=...` を含む) |
+| `COOLIFY_TOKEN` | `deploy` 権限の API トークン |
 
 以後は GitHub Release を公開するとデプロイが走る。
+workflow のログで応答が `302` かつ本文がログイン画面へのリダイレクトなら、`COOLIFY_WEBHOOK` が API ではなく管理画面の URL を指している。
+`401` ならトークンが無効か `deploy` 権限が無い。
+Secret を直したあとは、失敗した workflow を GitHub Actions の **Re-run jobs** で再実行すればよく、Release を作り直す必要はない。
 
 ## 6. 動作確認
 
