@@ -25,8 +25,12 @@ export function createInteractionCreateHandler(
           : `コマンドの実行中にエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`;
       logger.error("Command execution failed", { error });
       try {
-        if (interaction.deferred || interaction.replied) {
-          await interaction.editReply({ content: message });
+        if (interaction.deferred && !interaction.replied) {
+          // 追加は公開メッセージとして defer しているため、失敗時は空の公開応答を消して本人にだけ知らせる
+          await interaction.deleteReply();
+          await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral });
+        } else if (interaction.replied) {
+          await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral });
         } else {
           await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
         }
@@ -76,8 +80,8 @@ async function handleWatch(
   }
 
   if (subcommand === "add") {
-    // X 側の設定に数秒かかるため先に defer する。
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    // X 側の設定に数秒かかるため先に defer する。追加はサーバーの他のメンバーにも見える公開応答にする。
+    await interaction.deferReply();
     const me = interaction.guild?.members.me ?? null;
     const permissions =
       me === null || !("permissionsFor" in channel) ? null : channel.permissionsFor(me);
@@ -85,8 +89,10 @@ async function handleWatch(
       permissions !== null &&
       !permissions.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])
     ) {
-      await interaction.editReply({
+      await interaction.deleteReply();
+      await interaction.followUp({
         content: `<#${channel.id}> に Bot の閲覧権限と送信権限がありません。`,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -113,7 +119,7 @@ async function handleWatch(
       : "該当する監視対象と投稿先の組はありません。";
     await interaction.reply({
       content,
-      flags: MessageFlags.Ephemeral,
+      ...(result.removed ? {} : { flags: MessageFlags.Ephemeral }),
       allowedMentions: { parse: [] },
     });
   }
