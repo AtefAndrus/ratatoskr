@@ -3,6 +3,8 @@ name: Deploy to Coolify
 on:
   release:
     types: [published]
+  # Secret の修正後や Release を作り直したくないときに main の workflow で手動起動する
+  workflow_dispatch:
 
 permissions: {}
 
@@ -11,10 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Coolify Deployment
+        env:
+          COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        # Coolify の /api/v1/deploy は POST を要求する (GET は 200 で「POST に変わった」と返すだけでデプロイしない)
         run: |
           response=$(curl -s -w "\n%{http_code}" \
-            --request GET "${{ secrets.COOLIFY_WEBHOOK }}" \
-            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}")
+            --request POST "$COOLIFY_WEBHOOK" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN" \
+            --header "Accept: application/json")
 
           http_code=$(echo "$response" | tail -n1)
           body=$(echo "$response" | sed '$d')
