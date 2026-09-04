@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.3.1] - 2026-09-04
+
+
+### Added
+
+- /watch の応答を Markdown で見出しと箇条書きに整える (#18)
+
+
 ## [0.3.0] - 2026-09-04
 
 
@@ -54,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.3.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.2.0...v0.2.1
 
