@@ -25,7 +25,11 @@ export const watchCommand = new SlashCommandBuilder()
       .setName("add")
       .setDescription("監視対象アカウントを追加し、投稿先チャンネルを紐づけます")
       .addStringOption((option) =>
-        option.setName("account").setDescription("X のアカウント名 (@ は省略可)").setRequired(true),
+        option
+          .setName("account")
+          .setDescription("X のアカウント名 (@ は省略可。登録済みのものは候補に出ます)")
+          .setRequired(true)
+          .setAutocomplete(true),
       )
       .addChannelOption((option) =>
         option
