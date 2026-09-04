@@ -7,10 +7,17 @@ import {
 } from "discord.js";
 
 import { isLinkDomain } from "../../db/repositories/guildSettings";
-import { describeKinds, POST_KINDS, type RouteKinds } from "../../postKinds";
+import { POST_KINDS, type RouteKinds } from "../../postKinds";
 import { WatchServiceError, type WatchService } from "../../services/watchService";
 import { logger } from "../../utils/logger";
 import { metrics } from "../../utils/metrics";
+import {
+  errorMessage,
+  linkDomainMessage,
+  watchAddedMessage,
+  watchListMessage,
+  watchRemovedMessage,
+} from "../messages";
 
 export function createInteractionCreateHandler(
   watchService: WatchService,
@@ -26,10 +33,11 @@ export function createInteractionCreateHandler(
       await handleWatch(interaction, watchService);
     } catch (error) {
       metrics.increment("command.errors");
-      const message =
+      const message = errorMessage(
         error instanceof WatchServiceError
           ? error.message
-          : `コマンドの実行中にエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`;
+          : `コマンドの実行中にエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`,
+      );
       logger.error("Command execution failed", { error });
       try {
         if (interaction.deferred && !interaction.replied) {
@@ -77,27 +85,18 @@ async function handleWatch(
 ): Promise<void> {
   if (interaction.guildId === null) {
     await interaction.reply({
-      content: "このコマンドはサーバー内でのみ使用できます。",
+      content: errorMessage("このコマンドはサーバー内でのみ使用できます。"),
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === "list") {
-    const routes = watchService.list(interaction.guildId);
-    const lines = [`投稿 URL のドメイン: ${watchService.getLinkDomain(interaction.guildId)}`];
-    if (routes.length === 0) {
-      lines.push("監視対象はありません。");
-    } else {
-      lines.push(
-        ...routes.map(
-          (route) =>
-            `@${route.handle} (${route.displayName}) → <#${route.channelId}> [${describeKinds(route.kinds)}]`,
-        ),
-      );
-    }
     await interaction.reply({
-      content: lines.join("\n"),
+      content: watchListMessage({
+        routes: watchService.list(interaction.guildId),
+        linkDomain: watchService.getLinkDomain(interaction.guildId),
+      }),
       flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] },
     });
@@ -108,20 +107,20 @@ async function handleWatch(
     const requested = interaction.options.getString("domain");
     if (requested === null) {
       await interaction.reply({
-        content: `投稿 URL のドメインは ${watchService.getLinkDomain(interaction.guildId)} です。`,
+        content: linkDomainMessage(watchService.getLinkDomain(interaction.guildId), false),
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (!isLinkDomain(requested)) {
       await interaction.reply({
-        content: "対応していないドメインです。",
+        content: errorMessage("対応していないドメインです。"),
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
     watchService.setLinkDomain(interaction.guildId, requested);
-    await interaction.reply({ content: `投稿 URL のドメインを ${requested} にしました。` });
+    await interaction.reply({ content: linkDomainMessage(requested, true) });
     return;
   }
 
@@ -129,7 +128,7 @@ async function handleWatch(
   const channel = interaction.options.getChannel("channel") ?? interaction.channel;
   if (channel === null || !("guildId" in channel) || channel.guildId !== interaction.guildId) {
     await interaction.reply({
-      content: "投稿先チャンネルを特定できません。",
+      content: errorMessage("投稿先チャンネルを特定できません。"),
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -147,7 +146,7 @@ async function handleWatch(
     ) {
       await interaction.deleteReply();
       await interaction.followUp({
-        content: `<#${channel.id}> に Bot の閲覧権限と送信権限がありません。`,
+        content: errorMessage(`<#${channel.id}> に Bot の閲覧権限と送信権限がありません。`),
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -164,9 +163,14 @@ async function handleWatch(
       requestedBy: interaction.user.id,
       kinds,
     });
-    const verb = result.created ? "を追加しました" : "の設定を更新しました";
     await interaction.editReply({
-      content: `@${result.target.handle} (${result.target.displayName}) → <#${channel.id}> ${verb} [${describeKinds(result.route.kinds)}]。`,
+      content: watchAddedMessage({
+        handle: result.target.handle,
+        displayName: result.target.displayName,
+        channelId: channel.id,
+        kinds: result.route.kinds,
+        created: result.created,
+      }),
       allowedMentions: { parse: [] },
     });
     return;
@@ -175,8 +179,11 @@ async function handleWatch(
   if (subcommand === "remove") {
     const result = watchService.remove({ handle: account, channelId: channel.id });
     const content = result.removed
-      ? `@${account.replace(/^@/, "")} → <#${channel.id}> を削除しました。`
-      : "該当する監視対象と投稿先の組はありません。";
+      ? watchRemovedMessage({
+          handle: account.replace(/^@/, "").toLowerCase(),
+          channelId: channel.id,
+        })
+      : errorMessage("該当する監視対象と投稿先の組はありません。");
     await interaction.reply({
       content,
       ...(result.removed ? {} : { flags: MessageFlags.Ephemeral }),
