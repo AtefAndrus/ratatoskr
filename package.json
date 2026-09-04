@@ -1,6 +1,6 @@
 {
   "name": "ratatoskr",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Relays posts from watched X accounts to Discord channels via Web Push and X internal GraphQL",
   "license": "MIT",
