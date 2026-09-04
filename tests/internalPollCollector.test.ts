@@ -32,7 +32,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
         attemptedAt: "2026-09-04T00:01:10.000Z",
       });
 
-      expect(result).toEqual({ sent: 1, failed: 0, skipped: 0, suppressed: 1 });
+      expect(result).toEqual({ sent: 1, failed: 0, skipped: 0, filtered: 0, suppressed: 1 });
       expect(sender.sent).toEqual(["discord-channel:https://x.com/example/status/101"]);
     } finally {
       context.db.close();

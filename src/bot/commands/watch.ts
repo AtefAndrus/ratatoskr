@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 
 import { LINK_DOMAINS } from "../../db/repositories/guildSettings";
+import { POST_KIND_LABELS } from "../../postKinds";
 
 const WATCHABLE_CHANNEL_TYPES = [
   ChannelType.GuildText,
@@ -31,6 +32,22 @@ export const watchCommand = new SlashCommandBuilder()
           .setName("channel")
           .setDescription("投稿先チャンネル (省略時は現在のチャンネル)")
           .addChannelTypes(...WATCHABLE_CHANNEL_TYPES),
+      )
+      .addBooleanOption((option) =>
+        option.setName("posts").setDescription(`${POST_KIND_LABELS.posts}を送るか (既定: はい)`),
+      )
+      .addBooleanOption((option) =>
+        option.setName("quotes").setDescription(`${POST_KIND_LABELS.quotes}を送るか (既定: はい)`),
+      )
+      .addBooleanOption((option) =>
+        option
+          .setName("reposts")
+          .setDescription(`${POST_KIND_LABELS.reposts}を送るか (既定: はい)`),
+      )
+      .addBooleanOption((option) =>
+        option
+          .setName("replies")
+          .setDescription(`${POST_KIND_LABELS.replies}を送るか (既定: はい)`),
       ),
   )
   .addSubcommand((sub) =>

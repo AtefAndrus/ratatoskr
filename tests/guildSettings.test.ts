@@ -53,6 +53,7 @@ describe("投稿 URL のドメイン設定", () => {
         targetId: target,
         postId: "1",
         postUrl: "https://x.com/example/status/1",
+        kinds: ["posts"] as const,
       };
       await service.deliver(post);
       expect(
@@ -61,6 +62,7 @@ describe("投稿 URL のドメイン設定", () => {
         sent: 0,
         failed: 0,
         skipped: 2,
+        filtered: 0,
       });
       expect(sender.sent).toEqual([
         "c1:https://fixupx.com/example/status/1",

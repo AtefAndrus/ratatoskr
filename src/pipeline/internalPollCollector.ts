@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { InternalGraphqlRepository, NewTargetPost } from "../db/repositories/internalGraphql";
 import type { TargetRecord, TargetRepository } from "../db/repositories/targets";
+import { kindsFromTypesJson } from "../postKinds";
 import type { DeliveryResult, DeliveryService } from "../services/deliveryService";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
@@ -170,7 +171,7 @@ export class InternalPollCollector {
     );
     const deliveryResult =
       this.deps.delivery === null
-        ? { sent: 0, failed: 0, skipped: 0, suppressed: 0 }
+        ? { sent: 0, failed: 0, skipped: 0, filtered: 0, suppressed: 0 }
         : await deliverNewInternalPosts({
             delivery: this.deps.delivery,
             target,
@@ -204,7 +205,13 @@ export async function deliverNewInternalPosts(input: {
   deliveryNotBefore: string;
   attemptedAt: string;
 }): Promise<InternalDeliveryResult> {
-  const result: InternalDeliveryResult = { sent: 0, failed: 0, skipped: 0, suppressed: 0 };
+  const result: InternalDeliveryResult = {
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+    filtered: 0,
+    suppressed: 0,
+  };
   for (const post of input.posts) {
     if (!isOnOrAfter(post.createdAt, input.deliveryNotBefore)) {
       result.suppressed += 1;
@@ -217,12 +224,14 @@ export async function deliverNewInternalPosts(input: {
         targetId: input.target.id,
         postId: post.postId,
         postUrl: internalPostUrl(input.target.handle, post),
+        kinds: kindsFromTypesJson(post.typesJson),
       },
       input.attemptedAt,
     );
     result.sent += attempt.sent;
     result.failed += attempt.failed;
     result.skipped += attempt.skipped;
+    result.filtered += attempt.filtered;
   }
   return result;
 }

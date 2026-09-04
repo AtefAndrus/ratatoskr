@@ -8,6 +8,7 @@ import type { ReceiverRecord, ReceiverRepository } from "../db/repositories/rece
 import type { TargetRepository } from "../db/repositories/targets";
 import { InternalPollCollector, type InternalPollStatus } from "../pipeline/internalPollCollector";
 import { WebPushPipeline } from "../pipeline/webpushPipeline";
+import { kindsFromInternalTypes, type PostKind } from "../postKinds";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
 import { generateWebPushKeys } from "../webpush/keys";
@@ -109,6 +110,31 @@ export class ReceiverSupervisor {
       });
     }
     return result.after;
+  }
+
+  /** 投稿 1 件を内部 GraphQL で引いて種別を確定する。応答は調査用に外部交換記録へ残す。 */
+  private async classifyPost(
+    receiverId: number,
+    client: XInternalGraphqlClient,
+    postId: string,
+  ): Promise<readonly PostKind[]> {
+    const result = await client.fetchTweetResult(postId);
+    this.deps.exchanges.record({
+      source: "x_tweet_lookup",
+      receiverId,
+      occurredAt: result.fetchedAt,
+      method: "GET",
+      url: result.endpoint,
+      requestSummaryJson: JSON.stringify({ postId }),
+      responseStatus: result.responseStatus,
+      responseText: result.responseText,
+      error: result.error ?? result.parseError,
+    });
+    metrics.increment("internal.tweet_lookups");
+    if (result.post === null) {
+      throw new Error(result.error ?? result.parseError ?? "投稿を取得できませんでした");
+    }
+    return kindsFromInternalTypes(result.post.types);
   }
 
   private syncReceivers(signal: AbortSignal): void {
@@ -250,11 +276,17 @@ export class ReceiverSupervisor {
 
   private async runAutopushLoop(receiverId: number, entry: RunningReceiver): Promise<void> {
     const signal = entry.controller.signal;
+    const initial = this.deps.receivers.getById(receiverId);
+    if (initial === null) return;
+    const client = new XInternalGraphqlClient(initial.credentials, () =>
+      this.deps.internalGraphqlConfiguration.get(),
+    );
     const pipeline = new WebPushPipeline({
       notifications: this.deps.notifications,
       targets: this.deps.targets,
       delivery: this.deps.delivery,
       deliveryNotBefore: this.deps.deliveryNotBefore,
+      classifyPost: (postId) => this.classifyPost(receiverId, client, postId),
     });
     let reconnectDelay = MIN_RECONNECT_DELAY_MS;
     while (!signal.aborted) {
