@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#3B2A6B"/>
+  <g transform="translate(256 256) scale(1.08) translate(-250 -268)">
+  <g id="squirrel">
+    <!-- tail: rises behind the back and curls over -->
+    <path d="M296 350
+             C 400 352, 436 262, 388 190
+             C 352 138, 280 150, 284 208
+             C 288 258, 352 264, 364 224
+             C 372 206, 366 186, 350 180
+             C 396 192, 410 250, 380 290
+             C 356 322, 322 330, 292 318 Z"
+          fill="#F2A93B" stroke="#C97F1C" stroke-width="10" stroke-linejoin="round"/>
+    <!-- body -->
+    <ellipse cx="226" cy="322" rx="98" ry="76" fill="#F2A93B"/>
+    <ellipse cx="236" cy="340" rx="58" ry="42" fill="#FFD98A"/>
+    <!-- feet -->
+    <ellipse cx="290" cy="388" rx="32" ry="14" fill="#C97F1C"/>
+    <ellipse cx="176" cy="390" rx="28" ry="12" fill="#C97F1C"/>
+    <!-- head -->
+    <circle cx="150" cy="238" r="64" fill="#F2A93B"/>
+    <!-- ear (rounded) -->
+    <circle cx="128" cy="178" r="22" fill="#F2A93B"/>
+    <circle cx="130" cy="180" r="11" fill="#FFD98A"/>
+    <!-- eye -->
+    <circle cx="128" cy="232" r="11" fill="#1E2A47"/>
+    <circle cx="132" cy="228" r="3.5" fill="#FFFFFF"/>
+    <!-- muzzle / nose / cheek -->
+    <ellipse cx="108" cy="262" rx="22" ry="14" fill="#FFD98A"/>
+    <circle cx="92" cy="252" r="8" fill="#1E2A47"/>
+    <!-- envelope held in front paws -->
+    <g transform="translate(184 300) rotate(-10)">
+      <rect x="-48" y="-32" width="96" height="64" rx="8" fill="#FFFFFF" stroke="#1E2A47" stroke-width="7"/>
+      <path d="M-48 -26 L 0 12 L 48 -26" fill="none" stroke="#1E2A47" stroke-width="7" stroke-linejoin="round"/>
+    </g>
+    <circle cx="168" cy="326" r="14" fill="#C97F1C"/>
+    <circle cx="214" cy="334" r="12" fill="#C97F1C"/>
+  </g>
+  </g>
+  <rect x="0" y="424" width="512" height="88" fill="#E5484D"/>
+  <text x="256" y="486" font-family="Helvetica-Bold" font-weight="bold" font-size="64" text-anchor="middle" fill="#FFFFFF" letter-spacing="6">DEV</text>
+</svg>
