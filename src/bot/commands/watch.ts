@@ -5,6 +5,8 @@ import {
   SlashCommandBuilder,
 } from "discord.js";
 
+import { LINK_DOMAINS } from "../../db/repositories/guildSettings";
+
 const WATCHABLE_CHANNEL_TYPES = [
   ChannelType.GuildText,
   ChannelType.GuildAnnouncement,
@@ -36,7 +38,11 @@ export const watchCommand = new SlashCommandBuilder()
       .setName("remove")
       .setDescription("監視対象アカウントと投稿先チャンネルの紐づけを削除します")
       .addStringOption((option) =>
-        option.setName("account").setDescription("X のアカウント名 (@ は省略可)").setRequired(true),
+        option
+          .setName("account")
+          .setDescription("X のアカウント名 (このサーバーに登録済みのものから選べます)")
+          .setRequired(true)
+          .setAutocomplete(true),
       )
       .addChannelOption((option) =>
         option
@@ -49,4 +55,17 @@ export const watchCommand = new SlashCommandBuilder()
     sub
       .setName("list")
       .setDescription("このサーバーの監視対象アカウントと投稿先チャンネルの一覧を表示します"),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("domain")
+      .setDescription("投稿 URL のドメインを設定します (省略時は現在の設定を表示)")
+      .addStringOption((option) =>
+        option
+          .setName("domain")
+          .setDescription(
+            "x.com のままにするか、埋め込みを整形するサービスのドメインに置き換えるか",
+          )
+          .addChoices(...LINK_DOMAINS.map((domain) => ({ name: domain, value: domain }))),
+      ),
   );

@@ -1,10 +1,12 @@
 import {
+  type AutocompleteInteraction,
   type ChatInputCommandInteraction,
   type Interaction,
   MessageFlags,
   PermissionFlagsBits,
 } from "discord.js";
 
+import { isLinkDomain } from "../../db/repositories/guildSettings";
 import { WatchServiceError, type WatchService } from "../../services/watchService";
 import { logger } from "../../utils/logger";
 import { metrics } from "../../utils/metrics";
@@ -13,6 +15,10 @@ export function createInteractionCreateHandler(
   watchService: WatchService,
 ): (interaction: Interaction) => Promise<void> {
   return async function onInteractionCreate(interaction: Interaction): Promise<void> {
+    if (interaction.isAutocomplete()) {
+      if (interaction.commandName === "watch") await handleAutocomplete(interaction, watchService);
+      return;
+    }
     if (!interaction.isChatInputCommand() || interaction.commandName !== "watch") return;
     metrics.increment(`command.watch.${interaction.options.getSubcommand()}`);
     try {
@@ -41,6 +47,29 @@ export function createInteractionCreateHandler(
   };
 }
 
+async function handleAutocomplete(
+  interaction: AutocompleteInteraction,
+  watchService: WatchService,
+): Promise<void> {
+  const focused = interaction.options.getFocused(true);
+  if (focused.name !== "account" || interaction.guildId === null) {
+    await interaction.respond([]);
+    return;
+  }
+  try {
+    const suggestions = watchService.suggestHandles(interaction.guildId, focused.value);
+    await interaction.respond(
+      suggestions.map((suggestion) => ({
+        name: `@${suggestion.handle} (${suggestion.displayName})`.slice(0, 100),
+        value: suggestion.handle,
+      })),
+    );
+  } catch (error) {
+    logger.warn("Autocomplete failed", { error });
+    await interaction.respond([]).catch(() => undefined);
+  }
+}
+
 async function handleWatch(
   interaction: ChatInputCommandInteraction,
   watchService: WatchService,
@@ -55,17 +84,40 @@ async function handleWatch(
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === "list") {
     const routes = watchService.list(interaction.guildId);
-    const content =
-      routes.length === 0
-        ? "監視対象はありません。"
-        : routes
-            .map((route) => `@${route.handle} (${route.displayName}) → <#${route.channelId}>`)
-            .join("\n");
+    const lines = [`投稿 URL のドメイン: ${watchService.getLinkDomain(interaction.guildId)}`];
+    if (routes.length === 0) {
+      lines.push("監視対象はありません。");
+    } else {
+      lines.push(
+        ...routes.map((route) => `@${route.handle} (${route.displayName}) → <#${route.channelId}>`),
+      );
+    }
     await interaction.reply({
-      content,
+      content: lines.join("\n"),
       flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] },
     });
+    return;
+  }
+
+  if (subcommand === "domain") {
+    const requested = interaction.options.getString("domain");
+    if (requested === null) {
+      await interaction.reply({
+        content: `投稿 URL のドメインは ${watchService.getLinkDomain(interaction.guildId)} です。`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    if (!isLinkDomain(requested)) {
+      await interaction.reply({
+        content: "対応していないドメインです。",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    watchService.setLinkDomain(interaction.guildId, requested);
+    await interaction.reply({ content: `投稿 URL のドメインを ${requested} にしました。` });
     return;
   }
 
@@ -114,7 +166,9 @@ async function handleWatch(
     const result = watchService.remove({ handle: account, channelId: channel.id });
     const content = result.removed
       ? `@${account.replace(/^@/, "")} → <#${channel.id}> を削除しました。${
-          result.targetDisabled ? " 投稿先が無くなったため監視を停止しました。" : ""
+          result.targetDisabled
+            ? " このアカウントの投稿先が無くなったので、投稿の取得も止めました。"
+            : ""
         }`
       : "該当する監視対象と投稿先の組はありません。";
     await interaction.reply({

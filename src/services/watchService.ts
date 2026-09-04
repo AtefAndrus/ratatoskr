@@ -1,4 +1,5 @@
 import { normalizeHandle } from "../db/handle";
+import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/guildSettings";
 import type { ReceiverRepository } from "../db/repositories/receivers";
 import type { RouteRepository, RouteWithTarget } from "../db/repositories/routes";
 import type { TargetRecord, TargetRepository } from "../db/repositories/targets";
@@ -28,6 +29,7 @@ export class WatchService {
     private readonly targets: TargetRepository,
     private readonly routes: RouteRepository,
     private readonly supervisor: Pick<ReceiverSupervisor, "configureTarget" | "requestReconcile">,
+    private readonly guildSettings: GuildSettingsRepository,
   ) {}
 
   async add(input: {
@@ -94,5 +96,36 @@ export class WatchService {
 
   list(guildId: string): RouteWithTarget[] {
     return this.routes.listByGuild(guildId);
+  }
+
+  /** /watch remove の autocomplete 用に、このサーバーに経路がある監視対象を入力で絞って返す。 */
+  suggestHandles(
+    guildId: string,
+    query: string,
+    limit = 25,
+  ): Array<{ handle: string; displayName: string }> {
+    const needle = query.trim().replace(/^@/, "").toLowerCase();
+    const seen = new Map<string, { handle: string; displayName: string }>();
+    for (const route of this.routes.listByGuild(guildId)) {
+      if (seen.has(route.handle)) continue;
+      if (
+        needle !== "" &&
+        !route.handle.includes(needle) &&
+        !route.displayName.toLowerCase().includes(needle)
+      ) {
+        continue;
+      }
+      seen.set(route.handle, { handle: route.handle, displayName: route.displayName });
+    }
+    return [...seen.values()].slice(0, limit);
+  }
+
+  getLinkDomain(guildId: string): LinkDomain {
+    return this.guildSettings.get(guildId).linkDomain;
+  }
+
+  setLinkDomain(guildId: string, linkDomain: LinkDomain): void {
+    this.guildSettings.setLinkDomain(guildId, linkDomain);
+    logger.info("Link domain updated", { guildId, linkDomain });
   }
 }
