@@ -2,6 +2,14 @@ import type { AutopushSession } from "../autopush/protocol";
 import type { WebPushKeys } from "../webpush/keys";
 import { normalizeBearer, type XSessionCredentials } from "./credentials";
 
+// 応答が返らないままだと受信ループが終わらず、認証情報の載せ替えも停止処理も待ち続ける。
+const REQUEST_TIMEOUT_MS = 20_000;
+
+function requestSignal(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+}
+
 const PUSH_REGISTRATION_URL = "https://x.com/i/api/1.1/notifications/settings/login.json";
 
 export interface XPushRegistrationResult {
@@ -15,10 +23,12 @@ export async function registerXPushSubscription(
   session: AutopushSession,
   keys: WebPushKeys,
   fetchImplementation: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<XPushRegistrationResult> {
   const requestedAt = new Date().toISOString();
   const response = await fetchImplementation(PUSH_REGISTRATION_URL, {
     method: "POST",
+    signal: requestSignal(signal),
     headers: {
       Authorization: normalizeBearer(credentials.bearerToken),
       Cookie: `auth_token=${credentials.authToken}; ct0=${credentials.csrfToken}`,

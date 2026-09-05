@@ -64,7 +64,9 @@ async function main(name: string | undefined, rest: string[]): Promise<void> {
         if (!receivers.updateCredentials(label, await readCredentials())) {
           throw new Error(`受信アカウントがありません: ${label}`);
         }
-        console.log(`${label} の認証情報を更新しました。反映には Bot の再起動が必要です。`);
+        console.log(
+          `${label} の認証情報を更新しました。次回以降の同期で反映されます。再起動は要りません。`,
+        );
         break;
       }
       case "receiver:list": {
