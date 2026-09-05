@@ -63,4 +63,7 @@ commit_parsers = [
   { message = '^feat', group = "Added" },
   { message = '^fix', group = "Fixed" },
   { message = '^docs', group = "Documentation" },
+  # 接頭辞の無いコミットの受け皿。無いと squash 時に PR タイトルが接頭辞を落としていた場合、
+  # そのリリースの変更が changelog から黙って消える。
+  { message = ".*", group = "Changed" },
 ]
