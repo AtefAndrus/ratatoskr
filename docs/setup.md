@@ -65,7 +65,7 @@ X_AUTH_TOKEN='<値>' X_CT0='<値>' bun run cli receiver:add <label> < /dev/null
 
 Bot は 1 分ごとに受信アカウントの一覧を読み直し、新しいアカウントには AutoPush の購読を作成して X に登録する。
 購読情報と Web Push の秘密鍵は SQLite に保存する。
-追加と削除に再起動は要らないが、認証情報の更新だけは再起動が必要である。
+追加、削除、認証情報の更新のいずれにも再起動は要らない。認証情報は指紋の変化を見て、その受信アカウントの処理だけを張り直す。反映は次回以降の同期で行われ、進行中の X への要求が終わるのを待つぶん遅れることがある。
 
 ```bash
 bun run cli receiver:list
@@ -93,4 +93,4 @@ AutoPush connected
 ```
 
 `Receiver provisioning failed` が繰り返し出る場合は Cookie の値が違うか失効している。
-`bun run cli receiver:update <label>` で入れ直して再起動する。
+`bun run cli receiver:update <label>` で入れ直す。再起動は要らない。

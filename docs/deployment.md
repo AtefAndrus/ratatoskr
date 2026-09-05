@@ -80,7 +80,7 @@ Secret を直したあとは、失敗した workflow を GitHub Actions の **Re
 
 | 症状 | 確認 |
 | ---- | ---- |
-| `Receiver provisioning failed` が繰り返し出る | X の Cookie が失効している。`bun run cli receiver:update <label>` で更新して再起動する |
+| `Receiver provisioning failed` が繰り返し出る | ログの `error` を見る。X が 401/403 を返しているなら Cookie の失効なので `bun run cli receiver:update <label>` で更新する (再起動は不要)。それ以外は Mozilla AutoPush か DB 側の障害で、Cookie を入れ直しても直らない |
 | `/watch add` が「X 側の設定に失敗しました」を返す | 受信アカウントが未登録か、Cookie が失効している。`/admin/exchanges?source=x_target_notifications` で応答を見る |
 | 通知が届かない | `/admin/metrics` の `receivers[].lastNotificationAt` と `/admin/observations?errors=1` を見る |
 | 同じ投稿が 2 回届く | 同じチャンネルへ同じ対象の経路が 2 本ある。`/watch list` で確認する |

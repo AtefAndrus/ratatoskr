@@ -129,9 +129,15 @@ export class InternalGraphqlRepository {
             : 0;
         targetPostCount += post.isTargetAuthor;
         newPostCount += isNew * post.isTargetAuthor;
-        const storedPost = insertPost.get({ observationId: inserted.id, ...post, isNew }) as {
-          id: number;
-        };
+        // 初出でない投稿の生 JSON は保存しない。同じ投稿を毎周回入れ直すことになり、
+        // しかも同じ内容は観測の response_text にも初出時の行にも既にある。
+        // 保持期間切れで raw_result_json が NULL になった行と同じ形なので、読み手はそのまま扱える。
+        const storedPost = insertPost.get({
+          observationId: inserted.id,
+          ...post,
+          rawResultJson: isNew === 1 ? post.rawResultJson : null,
+          isNew,
+        }) as { id: number };
         if (isNew === 1 && post.isTargetAuthor === 1) {
           newTargetPosts.push({
             id: storedPost.id,

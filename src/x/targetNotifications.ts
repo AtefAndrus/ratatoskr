@@ -1,5 +1,14 @@
 import { normalizeBearer, type XSessionCredentials } from "./credentials";
 
+// 応答が返らないままだと受信ループが終わらず、認証情報の載せ替えも停止処理も待ち続ける。
+// 呼び出し側の停止指示も合成する。要求を最大 4 回続けるため、timeout だけだとその総和ぶん待つ。
+const REQUEST_TIMEOUT_MS = 20_000;
+
+function requestSignal(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+}
+
 const USER_BY_SCREEN_NAME_URL =
   "https://x.com/i/api/graphql/2qvSHpkWTMS9i0zJAwDNiA/UserByScreenName";
 const FOLLOW_URL = "https://x.com/i/api/1.1/friendships/create.json";
@@ -64,9 +73,10 @@ export async function configureTargetNotifications(
   credentials: XSessionCredentials,
   handle: string,
   fetchImplementation: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<ConfigureTargetResult> {
   const exchanges: XTargetExchange[] = [];
-  const before = await lookupTarget(credentials, handle, exchanges, fetchImplementation);
+  const before = await lookupTarget(credentials, handle, exchanges, fetchImplementation, signal);
   if (!before.following) {
     await postForm(
       credentials,
@@ -77,6 +87,7 @@ export async function configureTargetNotifications(
       },
       exchanges,
       fetchImplementation,
+      signal,
     );
   }
   if (!before.notifications || !before.wantRetweets) {
@@ -91,9 +102,10 @@ export async function configureTargetNotifications(
       },
       exchanges,
       fetchImplementation,
+      signal,
     );
   }
-  const after = await lookupTarget(credentials, handle, exchanges, fetchImplementation);
+  const after = await lookupTarget(credentials, handle, exchanges, fetchImplementation, signal);
   if (!after.following || !after.notifications || !after.wantRetweets) {
     throw new Error(`Xの通知設定を確認できませんでした: @${after.handle}`);
   }
@@ -105,6 +117,7 @@ async function lookupTarget(
   handle: string,
   exchanges: XTargetExchange[],
   fetchImplementation: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<TargetNotificationState> {
   const url = new URL(USER_BY_SCREEN_NAME_URL);
   url.searchParams.set(
@@ -120,6 +133,7 @@ async function lookupTarget(
     undefined,
     exchanges,
     fetchImplementation,
+    signal,
   );
   const value: unknown = JSON.parse(responseText);
   if (
@@ -159,6 +173,7 @@ async function postForm(
   fields: Record<string, string>,
   exchanges: XTargetExchange[],
   fetchImplementation: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<void> {
   await request(
     credentials,
@@ -167,6 +182,7 @@ async function postForm(
     new URLSearchParams(fields),
     exchanges,
     fetchImplementation,
+    signal,
   );
 }
 
@@ -177,10 +193,12 @@ async function request(
   body: URLSearchParams | undefined,
   exchanges: XTargetExchange[],
   fetchImplementation: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<string> {
   const occurredAt = new Date().toISOString();
   const response = await fetchImplementation(url, {
     method,
+    signal: requestSignal(signal),
     headers: {
       Authorization: normalizeBearer(credentials.bearerToken),
       Cookie: `auth_token=${credentials.authToken}; ct0=${credentials.csrfToken}`,

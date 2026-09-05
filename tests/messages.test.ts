@@ -60,7 +60,7 @@ describe("コマンド応答の Markdown", () => {
         { ...base, handle: "b", displayName: "B", channelId: "1", kinds: ALL_KINDS },
       ],
     });
-    expect(message).toBe(
+    expect(message).toEqual([
       [
         "### 監視対象の一覧",
         "-# 投稿 URL のドメイン: fixupx.com",
@@ -72,8 +72,59 @@ describe("コマンド応答の Markdown", () => {
         "**B ([@b](https://x.com/b))**",
         "- <#1>  送る種別: すべて",
       ].join("\n"),
+    ]);
+    expect(watchListMessage({ linkDomain: "x.com", routes: [] })[0]).toContain(
+      "監視対象はありません",
     );
-    expect(watchListMessage({ linkDomain: "x.com", routes: [] })).toContain("監視対象はありません");
+  });
+
+  test("一覧が 1 メッセージに収まらないときは上限内で分割してページ番号を付ける", () => {
+    const base = {
+      id: 0,
+      targetId: 1,
+      guildId: "g",
+      enabled: true,
+      createdBy: null,
+      createdAt: "",
+      kinds: ALL_KINDS,
+      channelId: "987654321098765432",
+    };
+    const routes = Array.from({ length: 60 }, (_, index) => ({
+      ...base,
+      handle: `example_user${index}`,
+      displayName: `サンプル表示名${index}`,
+    }));
+    const messages = watchListMessage({ linkDomain: "x.com", routes });
+
+    expect(messages.length).toBeGreaterThan(1);
+    for (const message of messages) expect(message.length).toBeLessThanOrEqual(2000);
+    expect(messages[0]).toStartWith("### 監視対象の一覧");
+    expect(messages[0]).toEndWith(`-# (1/${messages.length})`);
+    // 分割してもアカウントのブロックは途中で切らず、全件がどこかのメッセージに現れる。
+    const joined = messages.join("\n");
+    for (const route of routes) {
+      expect(joined).toContain(`**${route.displayName} ([@${route.handle}]`);
+    }
+  });
+
+  test("1 アカウントに経路が集中して単独で上限を超えるときは行で割る", () => {
+    const routes = Array.from({ length: 80 }, (_, index) => ({
+      id: index,
+      targetId: 1,
+      guildId: "g",
+      enabled: true,
+      createdBy: null,
+      createdAt: "",
+      kinds: ALL_KINDS,
+      handle: "example_user",
+      displayName: "サンプル表示名",
+      channelId: `98765432109876543${index % 10}`,
+    }));
+    const messages = watchListMessage({ linkDomain: "x.com", routes });
+
+    expect(messages.length).toBeGreaterThan(1);
+    for (const message of messages) expect(message.length).toBeLessThanOrEqual(2000);
+    expect(messages.join("\n").split("送る種別: すべて").length - 1).toBe(80);
   });
 
   test("削除の応答はアカウントと投稿先を追加の応答と同じ段組みで返す", () => {

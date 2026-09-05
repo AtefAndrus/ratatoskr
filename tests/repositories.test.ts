@@ -209,10 +209,24 @@ describe("observations と保持期間", () => {
           posts,
         ),
       ).toMatchObject({ newPostCount: 0, newTargetPosts: [] });
+      // 初出の観測だけが生 JSON を持ち、同じ投稿を再取得した観測は持たない
+      expect(context.observations.listPostsForObservation(1)[0]).toMatchObject({
+        isNew: 1,
+        rawResultJson: '{"rest_id":"100"}',
+      });
+      expect(context.observations.listPostsForObservation(2)[0]).toMatchObject({
+        isNew: 0,
+        rawResultJson: null,
+      });
       expect(
         context.observations.recordObservation({ ...observation, receiverId: receiverB }, posts),
       ).toMatchObject({
         newPostCount: 1,
+      });
+      // 初出判定は受信アカウントごとなので、別の受信では改めて生 JSON を残す
+      expect(context.observations.listPostsForObservation(3)[0]).toMatchObject({
+        isNew: 1,
+        rawResultJson: '{"rest_id":"100"}',
       });
       expect(context.observations.listRecent(10)).toHaveLength(3);
       expect(context.observations.listRecent(10, { errorsOnly: true })).toHaveLength(0);

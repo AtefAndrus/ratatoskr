@@ -10,6 +10,8 @@ import { AdaptivePollScheduler, type PollCompletion } from "../x/adaptivePollSch
 import type { XInternalGraphqlClient } from "../x/internalGraphql";
 
 const IDLE_WAIT_MS = 30_000;
+/** 待機を刻む上限。担当替えを取り込むまでの最大の遅れになる。 */
+const TARGET_REFRESH_INTERVAL_MS = 30_000;
 
 export interface InternalPollSummary {
   target: string;
@@ -48,11 +50,15 @@ export interface InternalPollCollectorDependencies {
   observations: InternalGraphqlRepository;
   delivery: DeliveryService | null;
   deliveryNotBefore: string;
+  selectTargets: (targets: readonly TargetRecord[]) => readonly TargetRecord[];
+  onPollResponse?: (responseStatus: number | null) => void;
 }
 
 /**
  * 監視対象本人のタイムラインを適応間隔で取得し、Web Push が拾わない返信などを補完する。
  * 監視対象は毎周回 DB から読み直すため、/watch add で増えた対象は再起動なしで取り込む。
+ * 全対象ではなく自分に割り当てられた分だけを追う。受信アカウント全員が全対象を引くと、
+ * 配信は claim で 1 回に落ちるのに X への要求だけが台数倍になるため。
  */
 export class InternalPollCollector {
   private readonly scheduler = new AdaptivePollScheduler([]);
@@ -81,13 +87,17 @@ export class InternalPollCollector {
           continue;
         }
         if (scheduled.waitMs > 0) {
-          await delay(scheduled.waitMs, undefined, { signal }).catch(() => undefined);
+          // 待機は刻み、待ったあとは必ず担当を読み直す。取得に入ってからでは、
+          // その 1 回ぶん (最大 20 秒の取得と保存と配信) だけ担当替えの反映が遅れる。
+          const sliceMs = Math.min(scheduled.waitMs, TARGET_REFRESH_INTERVAL_MS);
+          await delay(sliceMs, undefined, { signal }).catch(() => undefined);
           if (signal.aborted) break;
+          continue;
         }
         const target = byHandle.get(scheduled.target);
         if (target === undefined) continue;
         try {
-          const summary = await this.pollTarget(target);
+          const summary = await this.pollTarget(target, signal);
           this.scheduler.complete(target.handle, completionFromSummary(summary));
           this.status.lastPolledAt = new Date().toISOString();
           this.status.lastError = summary.error ?? summary.parseError;
@@ -126,7 +136,7 @@ export class InternalPollCollector {
   }
 
   private syncTargets(): Map<string, TargetRecord> {
-    const enabled = this.deps.targets.listEnabled();
+    const enabled = this.deps.selectTargets(this.deps.targets.listEnabled());
     const byHandle = new Map(enabled.map((target) => [target.handle, target]));
     for (const state of this.scheduler.snapshot()) {
       if (!byHandle.has(state.target)) this.scheduler.removeTarget(state.target);
@@ -136,8 +146,14 @@ export class InternalPollCollector {
     return byHandle;
   }
 
-  private async pollTarget(target: TargetRecord): Promise<InternalPollSummary> {
+  private async pollTarget(
+    target: TargetRecord,
+    signal: AbortSignal,
+  ): Promise<InternalPollSummary> {
     const result = await this.deps.client.fetchUserTweetsAndReplies(target);
+    // 保存や配信で落ちても認証の判断材料は失わないよう、応答を得た時点で先に渡す。
+    // 停止後に返ってきた応答は使わない。古い認証情報の結果が次のループへ持ち越される。
+    if (!signal.aborted) this.deps.onPollResponse?.(result.responseStatus);
     const stored = this.deps.observations.recordObservation(
       {
         receiverId: this.deps.receiverId,

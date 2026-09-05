@@ -12,7 +12,7 @@ describe("loadConfig", () => {
       healthPort: 3000,
       adminApiSecret: undefined,
       internalPollEnabled: true,
-      rawRetentionDays: 3,
+      rawRetentionDays: 1,
       retentionDays: 30,
       xWebBearerToken: X_WEB_BEARER_TOKEN,
     });
