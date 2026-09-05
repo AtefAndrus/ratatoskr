@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.5.0] - 2026-09-05
+
+
+### Added
+
+- 管理 API を CLI から叩けるようにする (#33)
+- 停止中の未配信投稿を復帰後に補完する (#35)
+
+
+### Documentation
+
+- 管理 API のヘルパで HTTP 状態を落とさない (#32)
+
+
 ## [0.4.0] - 2026-09-05
 
 
@@ -106,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.5.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.2...v0.3.3
