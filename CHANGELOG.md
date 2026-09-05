@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.3.3] - 2026-09-05
+
+
+### Documentation
+
+- 永続ボリュームは初回デプロイ前に付ける理由を書く (#22)
+- 管理 API の source 一覧に x_tweet_lookup を足す (#23)
+
+
+### Fixed
+
+- Watch コマンドのアカウント表示と削除処理を修正する (#25)
+
+
 ## [0.3.2] - 2026-09-04
 
 
@@ -70,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.3.3]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.2.1...v0.3.0
