@@ -21,7 +21,7 @@ X 側の仕様変更を調査するために、保存した生データをその
 `limit` は 1 から 1000 で既定は 50 である。
 GET 以外は `405` を返す。
 
-`source` の値は `x_push_registration`、`x_target_notifications`、`x_internal_api_document`、`x_transaction_pairs` である。
+`source` の値は `x_push_registration`、`x_target_notifications`、`x_tweet_lookup` (Web Push で通常投稿と引用を区別するための投稿 1 件の取得)、`x_internal_api_document`、`x_transaction_pairs` である。
 
 ## 認証
 
