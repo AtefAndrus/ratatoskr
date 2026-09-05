@@ -118,6 +118,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
         observations: context.observations,
         delivery: new DeliveryService(context.routes, context.deliveries, sender),
         deliveryNotBefore: "2026-09-04T00:00:00.000Z",
+        selectTargets: (targets) => targets,
       });
 
       await collector.run(controller.signal);
@@ -130,6 +131,120 @@ describe("内部 GraphQL からの Discord 通知", () => {
         lastError: null,
       });
       expect(context.observations.listRecent(10)).toHaveLength(1);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("担当外の監視対象は取得せず、取得ごとに HTTP ステータスを報告する", async () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const mine = addTarget(context, { userId: "42", handle: "mine" });
+      const theirs = addTarget(context, { userId: "43", handle: "theirs" });
+      context.routes.add({ targetId: mine, guildId: "g", channelId: "c1" });
+      context.routes.add({ targetId: theirs, guildId: "g", channelId: "c1" });
+      const controller = new AbortController();
+      const fetched: string[] = [];
+      const statuses: Array<number | null> = [];
+      const client = {
+        async fetchUserTweetsAndReplies(input: {
+          userId: string;
+          handle: string;
+        }): Promise<InternalTimelineFetchResult> {
+          fetched.push(input.handle);
+          return {
+            fetchedAt: "2026-09-05T00:00:00.000Z",
+            completedAt: "2026-09-05T00:00:00.500Z",
+            queryId: "q",
+            endpoint: "https://x.com/i/api/graphql/q/UserTweetsAndReplies",
+            variables: { userId: input.userId },
+            features: {},
+            transactionId: null,
+            responseStatus: 401,
+            responseText: null,
+            rateLimitLimit: null,
+            rateLimitRemaining: null,
+            rateLimitResetAt: null,
+            error: null,
+            parseError: null,
+            posts: [],
+          };
+        },
+      } as unknown as XInternalGraphqlClient;
+      const collector = new InternalPollCollector({
+        receiverId,
+        receiverLabel: "receiver-a",
+        client,
+        targets: context.targets,
+        observations: context.observations,
+        delivery: null,
+        deliveryNotBefore: "2026-09-04T00:00:00.000Z",
+        selectTargets: (targets) => targets.filter((target) => target.id === mine),
+        onPollResponse: (responseStatus) => {
+          statuses.push(responseStatus);
+          controller.abort();
+        },
+      });
+
+      await collector.run(controller.signal);
+
+      expect(fetched).toEqual(["mine"]);
+      expect(collector.snapshot().targets).toEqual(["mine"]);
+      expect(statuses).toEqual([401]);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("停止後に返ってきた応答は報告しない", async () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      addTarget(context, { userId: "42", handle: "example" });
+      const controller = new AbortController();
+      const statuses: Array<number | null> = [];
+      const client = {
+        async fetchUserTweetsAndReplies(input: {
+          userId: string;
+          handle: string;
+        }): Promise<InternalTimelineFetchResult> {
+          // 取得中に停止が指示された状況。古い認証情報の結果を次のループへ持ち越さない。
+          controller.abort();
+          return {
+            fetchedAt: "2026-09-05T00:00:00.000Z",
+            completedAt: "2026-09-05T00:00:00.500Z",
+            queryId: "q",
+            endpoint: "https://x.com/i/api/graphql/q/UserTweetsAndReplies",
+            variables: { userId: input.userId },
+            features: {},
+            transactionId: null,
+            responseStatus: 401,
+            responseText: null,
+            rateLimitLimit: null,
+            rateLimitRemaining: null,
+            rateLimitResetAt: null,
+            error: null,
+            parseError: null,
+            posts: [],
+          };
+        },
+      } as unknown as XInternalGraphqlClient;
+      const collector = new InternalPollCollector({
+        receiverId,
+        receiverLabel: "receiver-a",
+        client,
+        targets: context.targets,
+        observations: context.observations,
+        delivery: null,
+        deliveryNotBefore: "2026-09-04T00:00:00.000Z",
+        selectTargets: (targets) => targets,
+        onPollResponse: (responseStatus) => statuses.push(responseStatus),
+      });
+
+      await collector.run(controller.signal);
+
+      expect(statuses).toEqual([]);
     } finally {
       context.db.close();
     }
