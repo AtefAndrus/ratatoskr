@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const TIMESTAMP_DEFAULT = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -205,6 +205,105 @@ const MIGRATIONS: ReadonlyArray<(database: Database) => void> = [
       ALTER TABLE routes ADD COLUMN allow_quotes INTEGER NOT NULL DEFAULT 1 CHECK (allow_quotes IN (0, 1));
       ALTER TABLE routes ADD COLUMN allow_reposts INTEGER NOT NULL DEFAULT 1 CHECK (allow_reposts IN (0, 1));
       ALTER TABLE routes ADD COLUMN allow_replies INTEGER NOT NULL DEFAULT 1 CHECK (allow_replies IN (0, 1));
+    `);
+  },
+  (database) => {
+    database.exec(`
+      CREATE TABLE delivery_queue (
+        id INTEGER PRIMARY KEY,
+        target_id INTEGER NOT NULL REFERENCES watch_targets(id) ON DELETE CASCADE,
+        route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+        post_id TEXT NOT NULL,
+        post_url TEXT NOT NULL,
+        kinds_json TEXT NOT NULL,
+        post_created_at TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('webpush', 'internal_graphql')),
+        source_record_id INTEGER NOT NULL CHECK (source_record_id > 0),
+        state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'sending', 'failed', 'sent')),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        sending_started_at TEXT,
+        last_attempted_at TEXT,
+        discord_message_id TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (${TIMESTAMP_DEFAULT}),
+        updated_at TEXT NOT NULL DEFAULT (${TIMESTAMP_DEFAULT}),
+        UNIQUE (route_id, post_id)
+      ) STRICT;
+
+      CREATE INDEX delivery_queue_ready_idx ON delivery_queue(state, post_created_at, id);
+      CREATE INDEX delivery_queue_target_idx ON delivery_queue(target_id, state);
+
+      INSERT INTO delivery_queue (
+        target_id, route_id, post_id, post_url, kinds_json, post_created_at,
+        source, source_record_id, state, attempt_count, last_attempted_at, created_at, updated_at
+      )
+      SELECT routes.target_id, claims.route_id, substr(claims.dedupe_key, 6),
+             'https://x.com/' || targets.handle || '/status/' || substr(claims.dedupe_key, 6),
+             '["posts"]', claims.claimed_at, claims.source, claims.source_record_id,
+             'sent', 1, claims.claimed_at, claims.claimed_at, claims.claimed_at
+      FROM delivery_claims AS claims
+      JOIN routes ON routes.id = claims.route_id
+      JOIN watch_targets AS targets ON targets.id = routes.target_id
+      WHERE claims.state = 'sent' AND claims.dedupe_key LIKE 'post:%';
+
+      CREATE TABLE backlog_progress (
+        target_id INTEGER PRIMARY KEY REFERENCES watch_targets(id) ON DELETE CASCADE,
+        not_before TEXT NOT NULL,
+        next_cursor TEXT,
+        state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'complete')),
+        known_post_ids_json TEXT NOT NULL DEFAULT '[]',
+        seen_cursors_json TEXT NOT NULL DEFAULT '[]',
+        pages_fetched INTEGER NOT NULL DEFAULT 0 CHECK (pages_fetched >= 0),
+        last_stop_reason TEXT,
+        lease_receiver_id INTEGER REFERENCES receivers(id) ON DELETE SET NULL,
+        lease_until TEXT,
+        created_at TEXT NOT NULL DEFAULT (${TIMESTAMP_DEFAULT}),
+        updated_at TEXT NOT NULL DEFAULT (${TIMESTAMP_DEFAULT})
+      ) STRICT;
+
+      WITH route_starts AS (
+        SELECT target_id, min(created_at) AS route_created_at
+        FROM routes
+        GROUP BY target_id
+      ), baselines AS (
+        SELECT route_starts.target_id, route_starts.route_created_at,
+               (
+                 SELECT observations.id
+                 FROM internal_graphql_observations AS observations
+                 WHERE observations.target_id = route_starts.target_id
+                   AND observations.fetched_at >= route_starts.route_created_at
+                   AND observations.response_status = 200
+                   AND observations.error IS NULL AND observations.parse_error IS NULL
+                 ORDER BY observations.fetched_at, observations.id
+                 LIMIT 1
+               ) AS observation_id
+        FROM route_starts
+      )
+      INSERT INTO backlog_progress (target_id, not_before, known_post_ids_json)
+      SELECT baselines.target_id,
+             coalesce(observations.fetched_at, baselines.route_created_at),
+             coalesce(
+               (
+                 SELECT json_group_array(post_id)
+                 FROM (
+                   SELECT posts.post_id
+                   FROM internal_graphql_observation_posts AS posts
+                   WHERE posts.observation_id = baselines.observation_id
+                     AND posts.is_target_author = 1
+                   ORDER BY posts.id
+                 )
+               ),
+               '[]'
+             )
+      FROM baselines
+      LEFT JOIN internal_graphql_observations AS observations ON observations.id = baselines.observation_id;
+
+      CREATE TRIGGER clear_backlog_progress_after_last_route
+      AFTER DELETE ON routes
+      WHEN NOT EXISTS (SELECT 1 FROM routes WHERE target_id = OLD.target_id)
+      BEGIN
+        DELETE FROM backlog_progress WHERE target_id = OLD.target_id;
+      END;
     `);
   },
 ];

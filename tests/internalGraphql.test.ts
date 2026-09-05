@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { generateClientTransactionId, parseTransactionPairs } from "../src/x/clientTransactionId";
 import {
   extractTimelinePosts,
+  extractTimelinePage,
   InternalGraphqlConfigurationProvider,
   XInternalGraphqlClient,
 } from "../src/x/internalGraphql";
@@ -84,6 +85,85 @@ describe("X 内部 GraphQL", () => {
       "origin_user",
     ]);
     expect(posts.every((post) => post.createdAt === "2026-09-03T00:00:00.000Z")).toBe(true);
+  });
+
+  test("Bottomカーソルを抽出し、固定投稿だけを重なり判定から外す", () => {
+    const payload = {
+      data: {
+        user: {
+          result: {
+            timeline: {
+              timeline: {
+                instructions: [
+                  {
+                    type: "TimelinePinEntry",
+                    entry: entry("tweet-pinned", tweet("9", {})),
+                  },
+                  {
+                    type: "TimelineAddEntries",
+                    entries: [
+                      entry("tweet-2", tweet("2", {})),
+                      {
+                        entryId: "conversation-1",
+                        content: {
+                          items: [
+                            { item: { itemContent: tweet("1", {}) } },
+                            { item: { itemContent: tweet("0", {}) } },
+                          ],
+                        },
+                      },
+                      {
+                        entryId: "cursor-bottom",
+                        content: { cursorType: "Bottom", value: "cursor-2" },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    };
+
+    expect(extractTimelinePage(payload)).toMatchObject({
+      bottomCursor: "cursor-2",
+      regularPostIds: ["2"],
+    });
+    expect(extractTimelinePage(payload).posts.map((post) => post.postId)).toEqual([
+      "9",
+      "2",
+      "1",
+      "0",
+    ]);
+  });
+
+  test("API errors、タイムライン欠落、不正なBottomカーソルを拒否する", () => {
+    expect(() => extractTimelinePage({ errors: [{ code: 88, message: "Rate limit" }] })).toThrow(
+      "88: Rate limit",
+    );
+    expect(() => extractTimelinePage({ data: {} })).toThrow("正常なタイムライン構造");
+    expect(() =>
+      extractTimelinePage({
+        data: {
+          user: {
+            result: {
+              timeline: {
+                timeline: {
+                  instructions: [
+                    {
+                      entries: [
+                        { entryId: "cursor-bottom", content: { cursorType: "Bottom", value: 42 } },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow("Bottomカーソルの値が不正");
   });
 
   test("transaction ID を決定的な入力から生成できる", async () => {
@@ -177,6 +257,42 @@ describe("X 内部 GraphQL", () => {
     expect(result.posts).toEqual([]);
     expect(requested!.pathname).toBe("/i/api/graphql/query-2/UserTweetsAndReplies");
     expect(JSON.parse(requested!.searchParams.get("variables")!)).toMatchObject({ userId: "42" });
+  });
+
+  test("Bottomカーソルを要求へ渡し、429とHTTP 200のエラー本文を成功扱いしない", async () => {
+    const requested: URL[] = [];
+    let response = new Response("rate limited", { status: 429 });
+    const client = new XInternalGraphqlClient(
+      { authToken: "a", csrfToken: "c", bearerToken: "b" },
+      {
+        operations: {
+          UserTweetsAndReplies: { queryId: "query", features: {} },
+          TweetResultByRestId: { queryId: "lookup", features: {} },
+        },
+        pairs: [{ verification: "AQID", animationKey: "k" }],
+      },
+      (async (input: string | URL | Request) => {
+        requested.push(new URL(String(input)));
+        return response;
+      }) as typeof fetch,
+    );
+
+    const limited = await client.fetchUserTweetsAndReplies(
+      { userId: "42", handle: "example" },
+      "cursor-1",
+    );
+    expect(limited.error).toContain("HTTP 429");
+    expect(JSON.parse(requested[0]!.searchParams.get("variables")!)).toMatchObject({
+      cursor: "cursor-1",
+    });
+
+    response = Response.json({ errors: [{ message: "bad request" }] });
+    const apiError = await client.fetchUserTweetsAndReplies({ userId: "42", handle: "example" });
+    expect(apiError.error).toBeNull();
+    expect(apiError.parseError).toContain("bad request");
+    response = Response.json({ data: {} });
+    const malformed = await client.fetchUserTweetsAndReplies({ userId: "42", handle: "example" });
+    expect(malformed.parseError).toContain("正常なタイムライン構造");
   });
 });
 

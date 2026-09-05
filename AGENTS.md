@@ -31,13 +31,17 @@ bun test             # bun:test
 ## Architecture notes (コードから読み取りにくい判断)
 
 - Discord への送信は `delivery_claims` の `(route_id, dedupe_key)` 一意制約で重複排除する。Web Push と内部 GraphQL が同じ投稿を検出しても 1 回しか送らない根拠はこの表だけなので、保持期間で消さない。
-- 起動時刻より前に作成された投稿は保存だけして送らない (`deliveryNotBefore`)。AutoPush が切断中の通知を再配信してもバックログを流さないため。
+- Web Push と内部 GraphQL は投稿先単位の `delivery_queue` へ保存してから Discord へ送る。送信失敗と起動時に回収した `sending` は再試行し、Discord 受理後から DB 更新までの停止窓では欠落を避けて再送する。
+- 投稿先の `routes.created_at` より前の投稿はその投稿先へ送らない。既存 DB の補完は、投稿先作成後に成功した最初の観測時刻より前へ広げない。
 - 受信用 X アカウントは全員がすべての監視対象をフォローする冗長構成。`/watch add` は最初に成功した 1 アカウントで X 側を設定し、残りは `ReceiverSupervisor` の 10 分周期の照合で揃える。
 - フォローは全員でも、内部 GraphQL のポーリングは分担する。全員が全対象を引くと配信は `delivery_claims` で 1 回に落ちるのに X への要求だけが台数倍になるため。`pollAssignment.ts` が対象 ID を起点に 2 台へ割り当てる。1 台が落ちても対象が無人にならない冗長度で、受信 2 台以下では全員が全対象を持つ。
+- 停止中投稿の補完は `backlog_progress` の Bottom カーソルをたどり、通常取得と交互に同じ `AdaptivePollScheduler` へ流す。固定投稿と会話モジュールを除く通常エントリが既知投稿へ 3 件以上重なる、Bottomカーソルが無い、またはカーソルが循環した場合に完了する。
+- 複数受信アカウントが同じ対象を担当するときは `backlog_progress` の 1 分リースで補完要求を直列化する。取得失敗時はカーソルを進めず、停止理由を保存して別の受信アカウントからも再開できるようにする。
 - 受信アカウントの追加・削除と認証情報の更新は `ReceiverSupervisor` が 1 分ごとに DB を読み直して反映する。認証情報は実行中のループが起動時の値を握るため、指紋の変化を見てそのループだけ張り直す。
 - 認証切れは X が 401/403 を返し続けるだけでプロセスが止まらず、配信だけが静かに落ちる。連続 3 回の失敗で `ADMIN_ALERT_CHANNEL_ID` へ通知する。応答が返らなかった取得は成否のどちらにも数えない (瞬断で誤通知にも取り逃がしにもなるため)。
 - 内部 GraphQL の query ID と feature 一覧は fa0311/TwitterInternalAPIDocument から 6 時間 TTL で取得し、取得失敗時は前回値を使い続ける。
 - 生応答 (AutoPush フレーム、GraphQL 応答、X との登録応答) は保存する。PoC 実測で GraphQL 応答は 1 件 200KB あるため、`RAW_RETENTION_DAYS` で本文だけ先に落とし、行は `RETENTION_DAYS` まで残す。
+- `delivery_queue` と `backlog_progress` は送信と補完再開に必要なので保持期限で消さない。送信済みキューと `delivery_claims` も重複排除の根拠として残す。
 - `/health` は Discord 接続だけで判定する。AutoPush の再接続はプロセス内で完結し、コンテナ再起動では回復が早まらないため。
 
 ## Testing

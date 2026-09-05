@@ -4,7 +4,7 @@ import type { TargetRepository } from "../db/repositories/targets";
 import { PARSER_VERSION, parseXNotification } from "../notification/parser";
 import type { PostKind } from "../postKinds";
 import type { DeliveryService } from "../services/deliveryService";
-import { isPostOnOrAfter } from "../services/deliveryService";
+import { xSnowflakeTimestampMs } from "../services/deliveryService";
 import { decodeBase64url } from "../utils/base64url";
 import { metrics } from "../utils/metrics";
 import { decryptAes128Gcm, decryptAesGcm } from "../webpush/decrypt";
@@ -16,8 +16,6 @@ export interface WebPushPipelineDependencies {
   notifications: NotificationRepository;
   targets: TargetRepository;
   delivery: DeliveryService | null;
-  /** この時刻より前に作成された投稿は保存だけして Discord へは送らない (起動時のバックログ抑止)。 */
-  deliveryNotBefore: string;
   /**
    * 通常投稿と引用を区別する必要があるときだけ呼ばれ、投稿 ID から種別を確定する。
    * 未指定なら通常投稿か引用のどちらかとして扱い、どちらかを許可する経路へ送る。
@@ -141,10 +139,6 @@ export class WebPushPipeline {
       return 100;
     }
     const postId = parsed.notificationPostId ?? parsed.postId;
-    if (!isPostOnOrAfter(postId, this.deps.deliveryNotBefore)) {
-      metrics.increment("webpush.suppressed_backlog");
-      return 100;
-    }
     // URI の投稿者が監視対象と違えばリポスト。同じなら通常投稿か引用で、ペイロードからは区別できない。
     const isRepost = parsed.authorHandle !== null && parsed.authorHandle !== target.handle;
     const originalPostId = parsed.postId;
@@ -160,10 +154,16 @@ export class WebPushPipeline {
       targetId: target.id,
       postId,
       postUrl: parsed.postUrl,
+      createdAt: createdAtFromPostId(postId),
       kinds,
     });
     return result.failed > 0 ? 102 : 100;
   }
+}
+
+function createdAtFromPostId(postId: string): string | null {
+  const milliseconds = xSnowflakeTimestampMs(postId);
+  return milliseconds === null ? null : new Date(milliseconds).toISOString();
 }
 
 function readAesGcmParameters(headers: Record<string, string> | null): {

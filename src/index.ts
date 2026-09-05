@@ -8,6 +8,7 @@ import { onReady } from "./bot/events/ready";
 import { DiscordChannelPostSender } from "./bot/postSender";
 import { loadConfigFromEnvFiles } from "./config";
 import { openDatabase } from "./db";
+import { BacklogRepository } from "./db/repositories/backlog";
 import { DeliveryRepository } from "./db/repositories/deliveries";
 import { ExchangeRepository } from "./db/repositories/exchanges";
 import { GuildSettingsRepository } from "./db/repositories/guildSettings";
@@ -42,6 +43,7 @@ async function bootstrap(): Promise<void> {
   const routes = new RouteRepository(db);
   const notifications = new NotificationRepository(db);
   const deliveries = new DeliveryRepository(db);
+  const backlog = new BacklogRepository(db);
   const observations = new InternalGraphqlRepository(db);
   const exchanges = new ExchangeRepository(db);
   const maintenance = new MaintenanceRepository(db);
@@ -62,13 +64,12 @@ async function bootstrap(): Promise<void> {
     exchanges,
     notifications,
     observations,
+    backlog,
     delivery,
     internalGraphqlConfiguration: new InternalGraphqlConfigurationProvider((exchange) =>
       exchanges.record({ ...exchange, receiverId: null, requestSummaryJson: null }),
     ),
     internalPollEnabled: config.internalPollEnabled,
-    // 起動前に作成された投稿は保存だけして送らない。AutoPush の再配信でバックログが流れるのを防ぐ。
-    deliveryNotBefore: new Date().toISOString(),
     ...(config.adminAlertChannelId === undefined
       ? {}
       : { alerts: new DiscordAlertSender(client, config.adminAlertChannelId) }),
@@ -96,6 +97,7 @@ async function bootstrap(): Promise<void> {
       routes,
       notifications,
       deliveries,
+      backlog,
       observations,
       exchanges,
       maintenance,
@@ -106,6 +108,7 @@ async function bootstrap(): Promise<void> {
   const abortController = new AbortController();
   const background = Promise.all([
     supervisor.run(abortController.signal),
+    delivery.run(abortController.signal),
     runRetentionLoop({
       maintenance,
       rawRetentionDays: config.rawRetentionDays,

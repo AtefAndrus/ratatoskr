@@ -1,5 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 
+import type { BacklogRepository } from "../db/repositories/backlog";
 import type { InternalGraphqlRepository, NewTargetPost } from "../db/repositories/internalGraphql";
 import type { TargetRecord, TargetRepository } from "../db/repositories/targets";
 import { kindsFromTypesJson } from "../postKinds";
@@ -12,6 +13,7 @@ import type { XInternalGraphqlClient } from "../x/internalGraphql";
 const IDLE_WAIT_MS = 30_000;
 /** 待機を刻む上限。担当替えを取り込むまでの最大の遅れになる。 */
 const TARGET_REFRESH_INTERVAL_MS = 30_000;
+const BACKLOG_LEASE_MS = 5 * 60_000;
 
 export interface InternalPollSummary {
   target: string;
@@ -48,10 +50,11 @@ export interface InternalPollCollectorDependencies {
   client: XInternalGraphqlClient;
   targets: TargetRepository;
   observations: InternalGraphqlRepository;
+  backlog: BacklogRepository;
   delivery: DeliveryService | null;
-  deliveryNotBefore: string;
   selectTargets: (targets: readonly TargetRecord[]) => readonly TargetRecord[];
   onPollResponse?: (responseStatus: number | null) => void;
+  scheduler?: AdaptivePollScheduler;
 }
 
 /**
@@ -61,7 +64,8 @@ export interface InternalPollCollectorDependencies {
  * 配信は claim で 1 回に落ちるのに X への要求だけが台数倍になるため。
  */
 export class InternalPollCollector {
-  private readonly scheduler = new AdaptivePollScheduler([]);
+  private readonly scheduler: AdaptivePollScheduler;
+  private readonly backfillNext = new Set<number>();
   private readonly status: InternalPollStatus = {
     targets: [],
     lastPolledAt: null,
@@ -70,7 +74,9 @@ export class InternalPollCollector {
     rateLimitResetAt: null,
   };
 
-  constructor(private readonly deps: InternalPollCollectorDependencies) {}
+  constructor(private readonly deps: InternalPollCollectorDependencies) {
+    this.scheduler = deps.scheduler ?? new AdaptivePollScheduler([]);
+  }
 
   snapshot(): InternalPollStatus {
     return { ...this.status, targets: [...this.status.targets] };
@@ -97,7 +103,7 @@ export class InternalPollCollector {
         const target = byHandle.get(scheduled.target);
         if (target === undefined) continue;
         try {
-          const summary = await this.pollTarget(target, signal);
+          const summary = await this.pollScheduledTarget(target, signal);
           this.scheduler.complete(target.handle, completionFromSummary(summary));
           this.status.lastPolledAt = new Date().toISOString();
           this.status.lastError = summary.error ?? summary.parseError;
@@ -135,6 +141,27 @@ export class InternalPollCollector {
     }
   }
 
+  private async pollScheduledTarget(
+    target: TargetRecord,
+    signal: AbortSignal,
+  ): Promise<InternalPollSummary> {
+    if (this.backfillNext.delete(target.id)) {
+      const now = new Date().toISOString();
+      const leaseUntil = new Date(Date.now() + BACKLOG_LEASE_MS).toISOString();
+      const progress = this.deps.backlog.acquire(target.id, this.deps.receiverId, now, leaseUntil);
+      if (progress !== null && progress.nextCursor !== null) {
+        return await this.pollTarget(target, signal, progress.nextCursor, progress.notBefore);
+      }
+    }
+    this.deps.backlog.ensure(target.id);
+    const summary = await this.pollTarget(target, signal);
+    const progress = this.deps.backlog.get(target.id);
+    if (progress?.state === "pending" && progress.nextCursor !== null) {
+      this.backfillNext.add(target.id);
+    }
+    return summary;
+  }
+
   private syncTargets(): Map<string, TargetRecord> {
     const enabled = this.deps.selectTargets(this.deps.targets.listEnabled());
     const byHandle = new Map(enabled.map((target) => [target.handle, target]));
@@ -149,8 +176,10 @@ export class InternalPollCollector {
   private async pollTarget(
     target: TargetRecord,
     signal: AbortSignal,
+    cursor?: string,
+    backfillNotBefore?: string,
   ): Promise<InternalPollSummary> {
-    const result = await this.deps.client.fetchUserTweetsAndReplies(target);
+    const result = await this.deps.client.fetchUserTweetsAndReplies(target, cursor);
     // 保存や配信で落ちても認証の判断材料は失わないよう、応答を得た時点で先に渡す。
     // 停止後に返ってきた応答は使わない。古い認証情報の結果が次のループへ持ち越される。
     if (!signal.aborted) this.deps.onPollResponse?.(result.responseStatus);
@@ -191,10 +220,31 @@ export class InternalPollCollector {
         : await deliverNewInternalPosts({
             delivery: this.deps.delivery,
             target,
-            posts: stored.newTargetPosts,
-            deliveryNotBefore: this.deps.deliveryNotBefore,
+            posts: stored.targetPosts,
             attemptedAt: result.completedAt,
+            ...(backfillNotBefore === undefined ? {} : { notBefore: backfillNotBefore }),
           });
+    if (cursor === undefined) {
+      if (result.error === null && result.parseError === null) {
+        this.deps.backlog.startFromLatest(target.id, result.bottomCursor, result.completedAt);
+      }
+    } else if (result.error !== null || result.parseError !== null) {
+      this.deps.backlog.stop(
+        target.id,
+        this.deps.receiverId,
+        result.error ?? result.parseError ?? "unknown_error",
+        result.completedAt,
+      );
+    } else {
+      this.deps.backlog.savePage({
+        targetId: target.id,
+        receiverId: this.deps.receiverId,
+        requestedCursor: cursor,
+        bottomCursor: result.bottomCursor,
+        regularPostIds: result.regularPostIds,
+        now: result.completedAt,
+      });
+    }
     return {
       target: target.handle,
       observationId: stored.observationId,
@@ -218,8 +268,8 @@ export async function deliverNewInternalPosts(input: {
   delivery: DeliveryService;
   target: Pick<TargetRecord, "id" | "handle">;
   posts: readonly NewTargetPost[];
-  deliveryNotBefore: string;
   attemptedAt: string;
+  notBefore?: string;
 }): Promise<InternalDeliveryResult> {
   const result: InternalDeliveryResult = {
     sent: 0,
@@ -229,7 +279,7 @@ export async function deliverNewInternalPosts(input: {
     suppressed: 0,
   };
   for (const post of input.posts) {
-    if (!isOnOrAfter(post.createdAt, input.deliveryNotBefore)) {
+    if (input.notBefore !== undefined && !isOnOrAfter(post.createdAt, input.notBefore)) {
       result.suppressed += 1;
       continue;
     }
@@ -240,6 +290,7 @@ export async function deliverNewInternalPosts(input: {
         targetId: input.target.id,
         postId: post.postId,
         postUrl: internalPostUrl(input.target.handle, post),
+        createdAt: post.createdAt,
         kinds: kindsFromTypesJson(post.typesJson),
       },
       input.attemptedAt,

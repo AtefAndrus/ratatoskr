@@ -9,6 +9,7 @@ X 側の仕様変更を調査するために、保存した生データをその
 | パス | 説明 | クエリ |
 | ---- | ---- | ------ |
 | `/admin/metrics` | プロセス、Discord、受信アカウント状態、カウンタ、テーブル行数 | |
+| `/admin/backlog` | 対象ごとの補完進捗、未送信・送信中・失敗件数、最後の停止理由 | |
 | `/admin/logs` | メモリ上の直近ログ (最大 5000 行) | `level`, `lines`, `since` |
 | `/admin/receivers` | 受信アカウント一覧 (秘密情報を含まない) と稼働状態 | |
 | `/admin/targets` | 監視対象と経路の一覧 | |
@@ -52,6 +53,7 @@ export ADMIN_API_SECRET=...
 export ADMIN_BASE_URL=https://bot.example.com   # 既定は http://localhost:3000
 
 bun run cli admin /admin/metrics | jq .
+bun run cli admin /admin/backlog | jq .
 bun run cli admin /admin/observations "errors=1&limit=20" | jq .
 bun run cli admin /admin/observations/123 | jq -r .responseText | head -c 2000
 bun run cli admin /admin/logs "level=warn&lines=100"
@@ -71,6 +73,8 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 
 | 問い | 見る場所 | 読み方 |
 | ---- | -------- | ------ |
+| 停止中投稿の補完がどこまで進んだか | `/admin/backlog` の `progress` | `state` が `pending` なら `nextCursor` から再開する。`lastStopReason` は直近ページの保存、429などの取得失敗、既知投稿との重なり、Bottomカーソルの欠落、カーソル循環のいずれで止まったかを示す |
+| Discord送信が滞留しているか | `/admin/backlog` の `queue` | `pending` は未送信、`sending` は送信中、`failed` は直近の送信に失敗して再試行を待つ件数である。送信中にプロセスが停止した行は次回起動時に `pending` へ戻る |
 | rate limit に余裕があるか | `/admin/observations` の `rateLimitLimit`、`rateLimitRemaining`、`rateLimitResetAt` | 上限は応答ヘッダから取るので `rateLimitLimit` を見る (2026-09-05 の実測では 500 / 15 分)。`rateLimitRemaining` が `AdaptivePollScheduler` の予約枠 100 に近づくとポーリングが止まるので、そこまでの余裕で判断する |
 | 監視対象が分担できているか | `/admin/metrics` の `receivers[].internalPoll.targets` | どの対象も原則 2 台に載る。受信 2 台以下では全員が全対象を持つ。担当がゼロになる受信には認証確認用に 1 件を足すため、対象が受信より少ない構成では 3 台以上に載る対象が出る |
 | 受信アカウントの認証が生きているか | `/admin/observations?errors=1` の `responseStatus` と `error` | 401 と 403 は X が資格情報を拒んだことを示す (Cookie の失効が典型だが、それだけとは限らない)。`responseStatus` が `null` で `error` が入っているものは要求が届かなかった側で、認証とは別物 (`The operation timed out.` や `getaddrinfo ETIMEOUT x.com` など文言は一定しない) |

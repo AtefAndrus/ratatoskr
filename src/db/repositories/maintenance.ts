@@ -16,6 +16,8 @@ const COUNTED_TABLES = [
   "autopush_frames",
   "parsed_notifications",
   "delivery_claims",
+  "delivery_queue",
+  "backlog_progress",
   "discord_deliveries",
   "internal_graphql_observations",
   "internal_graphql_observation_posts",

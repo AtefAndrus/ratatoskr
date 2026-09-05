@@ -8,7 +8,8 @@
 X 公式 API は使わない。
 受信用の X アカウントで監視対象をフォローし、X が Firefox 向けに送る Web Push 通知を Mozilla AutoPush から直接受信して復号する。
 Web Push が配信しない返信は、X の内部 GraphQL を適応間隔で取得して補完する。
-両経路で検出した投稿は、Discord チャンネルごとに一度だけ送る。
+Bot の停止中に作成された投稿も、復帰後に内部 GraphQL の Bottom カーソルをたどって取得できる範囲まで補完する。
+両経路で検出した投稿は永続送信キューへまとめ、Discord チャンネルごとに一度だけ送る。
 
 ## 仕組み
 
@@ -90,7 +91,7 @@ X (内部 GraphQL) ◀──適応ポーリング── 受信アカウント �
 ## 運用
 
 - **デプロイ**：Coolify のアプリ作成、永続ボリューム、環境変数、GitHub Release からの自動デプロイは [docs/deployment.md](docs/deployment.md) に記載する。
-- **運用データ**：X 側の仕様変更を追えるよう、AutoPush の生フレーム、復号済みペイロード、内部 GraphQL の生応答、X との登録やフォローの応答を SQLite に保存する。生応答本文は `RAW_RETENTION_DAYS` を過ぎると本文だけ削除し、行は `RETENTION_DAYS` まで残す。重複排除の根拠である配信 claim は削除しない。
+- **運用データ**：X 側の仕様変更を追えるよう、AutoPush の生フレーム、復号済みペイロード、内部 GraphQL の生応答、X との登録やフォローの応答を SQLite に保存する。生応答本文は `RAW_RETENTION_DAYS` を過ぎると本文だけ削除し、行は `RETENTION_DAYS` まで残す。未送信キュー、補完進捗、重複排除の根拠である配信 claim は保持期限で削除しない。
 - **管理 API**：保存したデータは HMAC 認証付きの読み取り専用 API から取得できる。エンドポイントと署名手順は [docs/admin-api.md](docs/admin-api.md) に記載する。
 
 ### 制約
@@ -99,6 +100,8 @@ X (内部 GraphQL) ◀──適応ポーリング── 受信アカウント �
 - 内部 GraphQL の query ID と feature 一覧は起動時と 6 時間ごとに [fa0311/TwitterInternalAPIDocument](https://github.com/fa0311/TwitterInternalAPIDocument) から取得する。取得先が止まると前回の値を使い続ける。
 - 受信アカウントは X の利用規約上リスクを負う。専用の捨てアカウントを使う。
 - 通知タイトル (表示名) が複数の監視対象で同一だと通知主体を一意にできず、その通知は保存だけして送らない。
+- 補完できるのは X が内部 GraphQL から返す範囲に限られ、削除済みまたは閲覧不能な投稿は復元できない。
+- Discord が投稿を受理した直後から送信済み状態を保存するまでに停止した場合は、欠落を避けるため同じ投稿を再送することがある。
 
 ## 開発
 

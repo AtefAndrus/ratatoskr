@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { openDatabase } from "../../src/db";
+import { BacklogRepository } from "../../src/db/repositories/backlog";
 import { DeliveryRepository } from "../../src/db/repositories/deliveries";
 import { ExchangeRepository } from "../../src/db/repositories/exchanges";
 import { GuildSettingsRepository } from "../../src/db/repositories/guildSettings";
@@ -19,6 +20,7 @@ export interface TestContext {
   routes: RouteRepository;
   notifications: NotificationRepository;
   deliveries: DeliveryRepository;
+  backlog: BacklogRepository;
   observations: InternalGraphqlRepository;
   exchanges: ExchangeRepository;
   maintenance: MaintenanceRepository;
@@ -34,6 +36,7 @@ export function createTestContext(): TestContext {
     routes: new RouteRepository(db),
     notifications: new NotificationRepository(db),
     deliveries: new DeliveryRepository(db),
+    backlog: new BacklogRepository(db),
     observations: new InternalGraphqlRepository(db),
     exchanges: new ExchangeRepository(db),
     maintenance: new MaintenanceRepository(db),
