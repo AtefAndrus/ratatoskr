@@ -3,6 +3,7 @@ import { openDatabase } from "./db";
 import { ReceiverRepository } from "./db/repositories/receivers";
 import { RouteRepository } from "./db/repositories/routes";
 import { TargetRepository } from "./db/repositories/targets";
+import { runAdminCommand } from "./http/adminClient";
 import { upsertEnvValue } from "./utils/envFile";
 import { readHiddenLine } from "./utils/hiddenInput";
 import { X_WEB_BEARER_TOKEN } from "./x/credentials";
@@ -16,8 +17,10 @@ const USAGE = `使用方法:
   bun run cli receiver:remove <label>   受信用 X アカウントを削除する
   bun run cli watch:list                監視対象と投稿先チャンネルの一覧を表示する
   bun run cli env:set <NAME> [file]     値を非表示入力して .env.local (既定) に書き込む
+  bun run cli admin <path> [query]      管理 API を署名付きで叩く (例: admin /admin/metrics)
 
-認証情報は対話端末では非表示入力で受け取る。端末が無い場合は環境変数 X_AUTH_TOKEN と X_CT0 から読む。`;
+認証情報は対話端末では非表示入力で受け取る。端末が無い場合は環境変数 X_AUTH_TOKEN と X_CT0 から読む。
+admin は ADMIN_API_SECRET と、宛先の ADMIN_BASE_URL (既定 http://localhost:3000) を環境変数から読む。`;
 
 loadEnvFile();
 const [, , command, ...args] = process.argv;
@@ -33,6 +36,10 @@ try {
 async function main(name: string | undefined, rest: string[]): Promise<void> {
   if (name === undefined || name === "help" || name === "--help") {
     console.log(USAGE);
+    return;
+  }
+  if (name === "admin") {
+    await runAdmin(rest);
     return;
   }
   if (name === "env:set") {
@@ -147,6 +154,13 @@ async function readCredentials(): Promise<{
   }
   const bearerToken = process.env.X_BEARER_TOKEN?.trim();
   return bearerToken ? { authToken, csrfToken, bearerToken } : { authToken, csrfToken };
+}
+
+async function runAdmin(rest: string[]): Promise<void> {
+  const result = await runAdminCommand({ path: rest[0], query: rest[1], env: process.env });
+  if (result.stderr !== null) console.error(result.stderr);
+  if (result.stdout !== null) console.log(result.stdout);
+  if (result.exitCode !== 0) process.exitCode = result.exitCode;
 }
 
 function requireArgument(value: string | undefined, description: string): string {

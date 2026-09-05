@@ -23,6 +23,24 @@ export function canonicalizeQuery(searchParams: URLSearchParams): string {
   return pairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
 }
 
+/**
+ * 署名対象の文字列を組み立てる。組み立てを検証側と要求側に分けて持つと、
+ * 片方だけ直したときに 401 の原因が署名なのか鍵なのか切り分けられなくなる。
+ */
+export function buildAdminSigningInput(input: {
+  method: string;
+  pathname: string;
+  searchParams: URLSearchParams;
+  timestamp: string;
+}): string {
+  return [
+    input.method,
+    input.pathname,
+    canonicalizeQuery(input.searchParams),
+    input.timestamp,
+  ].join("\n");
+}
+
 function isValidTimestamp(raw: string | null, nowMs: number): boolean {
   if (!raw) return false;
   if (!TIMESTAMP_REGEX.test(raw)) return false;
@@ -51,8 +69,12 @@ export async function verifyAdminRequest(
   const provided = sigHeader.slice(7);
 
   const url = new URL(req.url);
-  const canonicalQuery = canonicalizeQuery(url.searchParams);
-  const message = `${req.method}\n${url.pathname}\n${canonicalQuery}\n${tsHeader as string}`;
+  const message = buildAdminSigningInput({
+    method: req.method,
+    pathname: url.pathname,
+    searchParams: url.searchParams,
+    timestamp: tsHeader as string,
+  });
   const expected = await hmacSha256Hex(secret, message);
 
   if (!timingSafeEqualHex(expected, provided)) {

@@ -9,6 +9,7 @@
 mise run setup       # bun install と .env の作成
 bun dev              # 開発起動 (.env / .env.local を読む)
 bun run cli          # 受信用 X アカウント管理 CLI の使い方を表示
+bun run cli admin /admin/metrics   # 管理 API を署名付きで叩く (ADMIN_API_SECRET と ADMIN_BASE_URL を読む)
 bun run check        # format:check, lint, typecheck, test, lint:md をまとめて実行
 bun run format       # oxfmt (Markdown は対象外。markdownlint-cli2 が format:md で整形する)
 bun run lint:fix     # oxlint --type-aware --fix
@@ -17,6 +18,7 @@ bun test             # bun:test
 
 - 起動には `DISCORD_TOKEN` と `DISCORD_APPLICATION_ID` が要る。受信用 X アカウントは `bun run cli receiver:add <label>` で SQLite に入れる。
 - 実 API に触る動作確認は、受信アカウントの Cookie と Discord Token を環境変数で渡して `bun dev` を短時間動かし、`/health` と `/admin/*` で観測する。
+- 稼働中の Bot を調べるときは `bun run cli admin` を使う。どのエンドポイントがどの問いに答えるかは [docs/admin-api.md](docs/admin-api.md) の「よくある調査」にある。
 
 ## Conventions that differ from defaults
 
