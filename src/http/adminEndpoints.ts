@@ -1,3 +1,4 @@
+import type { BacklogRepository } from "../db/repositories/backlog";
 import type { DeliveryRepository, DeliveryStatus } from "../db/repositories/deliveries";
 import type { ExchangeRepository } from "../db/repositories/exchanges";
 import type { InternalGraphqlRepository } from "../db/repositories/internalGraphql";
@@ -24,6 +25,7 @@ export interface AdminEndpointDependencies {
   routes: RouteRepository;
   notifications: NotificationRepository;
   deliveries: DeliveryRepository;
+  backlog: BacklogRepository;
   observations: InternalGraphqlRepository;
   exchanges: ExchangeRepository;
   maintenance: MaintenanceRepository;
@@ -74,7 +76,15 @@ export function createAdminRouter(
           ...metrics.snapshot(),
           receivers: deps.receiverStatuses(),
           tables: deps.maintenance.tableCounts(),
+          backlog: {
+            queue: deps.deliveries.queueCounts(),
+            progress: deps.backlog.list(),
+          },
         }),
+    },
+    {
+      match: (pathname) => pathname === "/admin/backlog",
+      handle: () => json({ queue: deps.deliveries.queueCounts(), progress: deps.backlog.list() }),
     },
     {
       match: (pathname) => pathname === "/admin/logs",

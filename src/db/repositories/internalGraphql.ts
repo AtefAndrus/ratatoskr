@@ -74,6 +74,7 @@ export class InternalGraphqlRepository {
     postCount: number;
     targetPostCount: number;
     newTargetPosts: NewTargetPost[];
+    targetPosts: NewTargetPost[];
   } {
     const insertObservation = this.db.query(
       `INSERT INTO internal_graphql_observations (
@@ -118,6 +119,7 @@ export class InternalGraphqlRepository {
       let newPostCount = 0;
       let targetPostCount = 0;
       const newTargetPosts: NewTargetPost[] = [];
+      const targetPosts: NewTargetPost[] = [];
       for (const post of posts) {
         const isNew =
           hasSeenPost.get({
@@ -138,8 +140,8 @@ export class InternalGraphqlRepository {
           rawResultJson: isNew === 1 ? post.rawResultJson : null,
           isNew,
         }) as { id: number };
-        if (isNew === 1 && post.isTargetAuthor === 1) {
-          newTargetPosts.push({
+        if (post.isTargetAuthor === 1) {
+          const targetPost = {
             id: storedPost.id,
             postId: post.postId,
             createdAt: post.createdAt,
@@ -147,7 +149,9 @@ export class InternalGraphqlRepository {
             typesJson: post.typesJson,
             referencedPostIdsJson: post.referencedPostIdsJson,
             referencedAuthorHandle: post.referencedAuthorHandle,
-          });
+          };
+          targetPosts.push(targetPost);
+          if (isNew === 1) newTargetPosts.push(targetPost);
         }
       }
       this.db
@@ -168,6 +172,7 @@ export class InternalGraphqlRepository {
         postCount: posts.length,
         targetPostCount,
         newTargetPosts,
+        targetPosts,
       };
     })();
   }

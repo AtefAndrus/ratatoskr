@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { BacklogRepository } from "../src/db/repositories/backlog";
 import type { NewTargetPost } from "../src/db/repositories/internalGraphql";
 import {
   deliverNewInternalPosts,
@@ -15,11 +16,14 @@ import {
 } from "./helpers/database";
 
 describe("内部 GraphQL からの Discord 通知", () => {
-  test("起動前の初出投稿は保存対象に留め、起動後の投稿だけを送る", async () => {
+  test("投稿先の登録前の投稿は送らず、登録後の投稿だけを送る", async () => {
     const context = createTestContext();
     try {
       const target = addTarget(context, { handle: "example" });
       context.routes.add({ targetId: target, guildId: "g", channelId: "discord-channel" });
+      context.db
+        .query("UPDATE routes SET created_at = $createdAt WHERE target_id = $targetId")
+        .run({ targetId: target, createdAt: "2026-09-04T00:00:30.000Z" });
       const sender = createRecordingSender();
       const result = await deliverNewInternalPosts({
         delivery: new DeliveryService(context.routes, context.deliveries, sender),
@@ -28,11 +32,10 @@ describe("内部 GraphQL からの Discord 通知", () => {
           createPost(1, "100", "2026-09-04T00:00:00.000Z"),
           createPost(2, "101", "2026-09-04T00:01:00.000Z"),
         ],
-        deliveryNotBefore: "2026-09-04T00:00:30.000Z",
         attemptedAt: "2026-09-04T00:01:10.000Z",
       });
 
-      expect(result).toEqual({ sent: 1, failed: 0, skipped: 0, filtered: 0, suppressed: 1 });
+      expect(result).toEqual({ sent: 1, failed: 0, skipped: 0, filtered: 1, suppressed: 0 });
       expect(sender.sent).toEqual(["discord-channel:https://x.com/example/status/101"]);
     } finally {
       context.db.close();
@@ -44,6 +47,9 @@ describe("内部 GraphQL からの Discord 通知", () => {
     try {
       const target = addTarget(context, { handle: "example" });
       context.routes.add({ targetId: target, guildId: "g", channelId: "discord-channel" });
+      context.db
+        .query("UPDATE routes SET created_at = $createdAt WHERE target_id = $targetId")
+        .run({ targetId: target, createdAt: "2026-09-04T00:00:30.000Z" });
       const sender = createRecordingSender();
       await deliverNewInternalPosts({
         delivery: new DeliveryService(context.routes, context.deliveries, sender),
@@ -52,7 +58,6 @@ describe("内部 GraphQL からの Discord 通知", () => {
           createPost(1, "200", "2026-09-04T00:01:00.000Z", ["repost"], ["199"], "origin_user"),
           createPost(2, "201", "2026-09-04T00:02:00.000Z", ["repost"], ["198"]),
         ],
-        deliveryNotBefore: "2026-09-04T00:00:30.000Z",
         attemptedAt: "2026-09-04T00:01:10.000Z",
       });
       expect(sender.sent).toEqual([
@@ -70,6 +75,9 @@ describe("内部 GraphQL からの Discord 通知", () => {
       const receiverId = addReceiver(context);
       const target = addTarget(context, { userId: "42", handle: "example" });
       context.routes.add({ targetId: target, guildId: "g", channelId: "c1" });
+      context.db
+        .query("UPDATE routes SET created_at = $createdAt WHERE target_id = $targetId")
+        .run({ targetId: target, createdAt: "2026-09-04T00:00:00.000Z" });
       const sender = createRecordingSender();
       const controller = new AbortController();
       const fetched: string[] = [];
@@ -95,6 +103,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
             rateLimitResetAt: null,
             error: null,
             parseError: null,
+            regularPostIds: ["500"],
+            bottomCursor: null,
             posts: [
               {
                 postId: "500",
@@ -116,8 +126,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
         client,
         targets: context.targets,
         observations: context.observations,
+        backlog: context.backlog,
         delivery: new DeliveryService(context.routes, context.deliveries, sender),
-        deliveryNotBefore: "2026-09-04T00:00:00.000Z",
         selectTargets: (targets) => targets,
       });
 
@@ -131,6 +141,82 @@ describe("内部 GraphQL からの Discord 通知", () => {
         lastError: null,
       });
       expect(context.observations.listRecent(10)).toHaveLength(1);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("同一起動の2collectorは対象の補完初期化を一度だけ共有する", async () => {
+    const context = createTestContext();
+    try {
+      const receiverA = addReceiver(context, "a");
+      const receiverB = addReceiver(context, "b");
+      const targetId = addTarget(context, { userId: "42", handle: "example" });
+      context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      context.backlog.ensure(targetId);
+      context.backlog.startFromLatest(targetId, null, "2026-09-05T00:00:00.000Z");
+      const originalEnsure = context.backlog.ensure.bind(context.backlog);
+      let ensureCalls = 0;
+      context.backlog.ensure = (id, now) => {
+        ensureCalls += 1;
+        return originalEnsure(id, now);
+      };
+      const runOnce = async (
+        backlog: BacklogRepository,
+        receiverId: number,
+        label: string,
+        bottomCursor: string,
+      ) => {
+        const controller = new AbortController();
+        const client = {
+          async fetchUserTweetsAndReplies(): Promise<InternalTimelineFetchResult> {
+            controller.abort();
+            return emptyTimelinePage(bottomCursor);
+          },
+        } as unknown as XInternalGraphqlClient;
+        const collector = new InternalPollCollector({
+          receiverId,
+          receiverLabel: label,
+          client,
+          targets: context.targets,
+          observations: context.observations,
+          backlog,
+          delivery: null,
+          selectTargets: (targets) => targets,
+        });
+        await collector.run(controller.signal);
+      };
+
+      await runOnce(context.backlog, receiverA, "a", "cursor-a");
+      await runOnce(context.backlog, receiverB, "b", "cursor-b");
+
+      expect(ensureCalls).toBe(1);
+      expect(context.backlog.get(targetId)).toMatchObject({
+        state: "pending",
+        nextCursor: "cursor-a",
+      });
+      context.backlog.acquire(
+        targetId,
+        receiverA,
+        "2026-09-05T00:00:01.000Z",
+        "2026-09-05T00:01:01.000Z",
+      );
+      context.backlog.savePage({
+        targetId,
+        receiverId: receiverA,
+        requestedCursor: "cursor-a",
+        bottomCursor: null,
+        regularPostIds: [],
+        now: "2026-09-05T00:00:02.000Z",
+      });
+
+      const restartedBacklog = new BacklogRepository(context.db);
+      await runOnce(restartedBacklog, receiverA, "a-restarted", "cursor-after-restart");
+
+      expect(restartedBacklog.get(targetId)).toMatchObject({
+        state: "pending",
+        nextCursor: "cursor-after-restart",
+      });
     } finally {
       context.db.close();
     }
@@ -168,6 +254,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
             rateLimitResetAt: null,
             error: null,
             parseError: null,
+            regularPostIds: [],
+            bottomCursor: null,
             posts: [],
           };
         },
@@ -178,8 +266,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
         client,
         targets: context.targets,
         observations: context.observations,
+        backlog: context.backlog,
         delivery: null,
-        deliveryNotBefore: "2026-09-04T00:00:00.000Z",
         selectTargets: (targets) => targets.filter((target) => target.id === mine),
         onPollResponse: (responseStatus) => {
           statuses.push(responseStatus);
@@ -226,6 +314,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
             rateLimitResetAt: null,
             error: null,
             parseError: null,
+            regularPostIds: [],
+            bottomCursor: null,
             posts: [],
           };
         },
@@ -236,8 +326,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
         client,
         targets: context.targets,
         observations: context.observations,
+        backlog: context.backlog,
         delivery: null,
-        deliveryNotBefore: "2026-09-04T00:00:00.000Z",
         selectTargets: (targets) => targets,
         onPollResponse: (responseStatus) => statuses.push(responseStatus),
       });
@@ -267,5 +357,27 @@ function createPost(
     typesJson: JSON.stringify(types),
     referencedPostIdsJson: JSON.stringify(referencedPostIds),
     referencedAuthorHandle,
+  };
+}
+
+function emptyTimelinePage(bottomCursor: string): InternalTimelineFetchResult {
+  return {
+    fetchedAt: "2026-09-05T00:00:00.000Z",
+    completedAt: "2026-09-05T00:00:00.500Z",
+    queryId: "q",
+    endpoint: "https://x.com/i/api/graphql/q/UserTweetsAndReplies",
+    variables: {},
+    features: {},
+    transactionId: null,
+    responseStatus: 200,
+    responseText: "{}",
+    rateLimitLimit: 50,
+    rateLimitRemaining: 49,
+    rateLimitResetAt: null,
+    error: null,
+    parseError: null,
+    regularPostIds: [],
+    bottomCursor,
+    posts: [],
   };
 }

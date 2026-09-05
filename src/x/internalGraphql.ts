@@ -56,6 +56,8 @@ interface InternalGraphqlResponse {
 export interface InternalTimelineFetchResult extends InternalGraphqlResponse {
   parseError: string | null;
   posts: InternalTimelinePost[];
+  regularPostIds: string[];
+  bottomCursor: string | null;
 }
 
 export interface InternalTweetLookupResult extends InternalGraphqlResponse {
@@ -92,6 +94,7 @@ export class XInternalGraphqlClient {
 
   async fetchUserTweetsAndReplies(
     target: InternalTimelineTarget,
+    bottomCursor?: string,
   ): Promise<InternalTimelineFetchResult> {
     const response = await this.request({
       operation: "UserTweetsAndReplies",
@@ -102,20 +105,26 @@ export class XInternalGraphqlClient {
         withCommunity: true,
         withVoice: true,
         withV2Timeline: true,
+        ...(bottomCursor === undefined ? {} : { cursor: bottomCursor }),
       },
       fieldToggles: { withArticlePlainText: false },
       referer: `https://x.com/${target.handle}/with_replies`,
     });
     let posts: InternalTimelinePost[] = [];
+    let regularPostIds: string[] = [];
+    let parsedBottomCursor: string | null = null;
     let parseError: string | null = null;
     if (response.error === null && response.responseText !== null) {
       try {
-        posts = extractTimelinePosts(JSON.parse(response.responseText));
+        const page = extractTimelinePage(JSON.parse(response.responseText));
+        posts = page.posts;
+        regularPostIds = page.regularPostIds;
+        parsedBottomCursor = page.bottomCursor;
       } catch (failure) {
         parseError = errorMessage(failure);
       }
     }
-    return { ...response, parseError, posts };
+    return { ...response, parseError, posts, regularPostIds, bottomCursor: parsedBottomCursor };
   }
 
   /** 投稿 1 件を引いて種別を確定する。Web Push では通常投稿と引用を区別できないときに使う。 */
@@ -234,14 +243,58 @@ export async function loadInternalGraphqlConfiguration(
 }
 
 export function extractTimelinePosts(payload: unknown): InternalTimelinePost[] {
+  return extractTimelinePage(payload).posts;
+}
+
+export interface InternalTimelinePage {
+  posts: InternalTimelinePost[];
+  regularPostIds: string[];
+  bottomCursor: string | null;
+}
+
+export function extractTimelinePage(payload: unknown): InternalTimelinePage {
+  assertNoApiErrors(payload);
+  const instructions = readTimelineInstructions(payload);
+  if (instructions === null) throw new Error("応答に正常なタイムライン構造がありません");
   const results: unknown[] = [];
-  visitTimelineEntries(payload, results);
+  const regularResults: unknown[] = [];
+  let bottomCursor: string | null = null;
+  let sawBottomCursor = false;
+  for (const instruction of instructions) {
+    if (!isObject(instruction)) continue;
+    const pinned = instruction.type === "TimelinePinEntry";
+    const entries: unknown[] = [];
+    if (instruction.entry !== undefined) entries.push(instruction.entry);
+    if (Array.isArray(instruction.entries)) entries.push(...instruction.entries);
+    for (const entry of entries) {
+      if (!isObject(entry)) continue;
+      const cursor = readBottomCursor(entry);
+      if (cursor.found) {
+        sawBottomCursor = true;
+        if (cursor.value === null) throw new Error("Bottomカーソルの値が不正です");
+        bottomCursor = cursor.value;
+      }
+      const entryResults: unknown[] = [];
+      collectEntryResults(entry.content, entryResults);
+      results.push(...entryResults);
+      if (!pinned && isRegularTimelineEntry(entry)) regularResults.push(...entryResults);
+    }
+  }
   const posts = new Map<string, InternalTimelinePost>();
   for (const raw of results) {
     const post = classifyTweetResult(raw);
     if (post !== null) posts.set(post.postId, post);
   }
-  return [...posts.values()];
+  const regularPostIds = new Set<string>();
+  for (const raw of regularResults) {
+    const post = classifyTweetResult(raw);
+    if (post !== null) regularPostIds.add(post.postId);
+  }
+  return {
+    posts: [...posts.values()],
+    regularPostIds: [...regularPostIds],
+    bottomCursor: sawBottomCursor ? bottomCursor : null,
+  };
 }
 
 /** TweetResultByRestId の応答 (`data.tweetResult.result`) から投稿 1 件を取り出す。 */
@@ -295,17 +348,53 @@ export function classifyTweetResult(raw: unknown): InternalTimelinePost | null {
   };
 }
 
-function visitTimelineEntries(value: unknown, output: unknown[]): void {
-  if (Array.isArray(value)) {
-    for (const item of value) visitTimelineEntries(item, output);
-    return;
+function readTimelineInstructions(payload: unknown): unknown[] | null {
+  if (!isObject(payload) || !isObject(payload.data) || !isObject(payload.data.user)) return null;
+  const result = isObject(payload.data.user.result) ? payload.data.user.result : null;
+  if (result === null) return null;
+  const timeline = isObject(result.timeline)
+    ? result.timeline
+    : isObject(result.timeline_v2)
+      ? result.timeline_v2
+      : null;
+  if (
+    timeline === null ||
+    !isObject(timeline.timeline) ||
+    !Array.isArray(timeline.timeline.instructions)
+  ) {
+    return null;
   }
-  if (!isObject(value)) return;
-  if (typeof value.entryId === "string") {
-    collectEntryResults(value.content, output);
-    return;
-  }
-  for (const child of Object.values(value)) visitTimelineEntries(child, output);
+  return timeline.timeline.instructions;
+}
+
+function assertNoApiErrors(payload: unknown): void {
+  if (!isObject(payload) || !Array.isArray(payload.errors) || payload.errors.length === 0) return;
+  const messages = payload.errors.map((value) => {
+    if (!isObject(value)) return "unknown";
+    const code =
+      typeof value.code === "number" || typeof value.code === "string" ? value.code : null;
+    const message = typeof value.message === "string" ? value.message : "unknown";
+    return code === null ? message : `${code}: ${message}`;
+  });
+  throw new Error(`X内部GraphQL APIエラー: ${messages.join(", ")}`);
+}
+
+function readBottomCursor(entry: Record<string, unknown>): {
+  found: boolean;
+  value: string | null;
+} {
+  const content = isObject(entry.content) ? entry.content : null;
+  if (content === null || content.cursorType !== "Bottom") return { found: false, value: null };
+  return {
+    found: true,
+    value: typeof content.value === "string" && content.value.length > 0 ? content.value : null,
+  };
+}
+
+function isRegularTimelineEntry(entry: Record<string, unknown>): boolean {
+  if (typeof entry.entryId === "string" && entry.entryId.startsWith("tweet-")) return true;
+  const content = isObject(entry.content) ? entry.content : null;
+  return content?.entryType === "TimelineTimelineItem";
 }
 
 function collectEntryResults(value: unknown, output: unknown[]): void {

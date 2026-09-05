@@ -33,7 +33,6 @@ describe("WebPushPipeline", () => {
         notifications: context.notifications,
         targets: context.targets,
         delivery: new DeliveryService(context.routes, context.deliveries, createRecordingSender()),
-        deliveryNotBefore: "2026-09-01T00:00:00.000Z",
       });
       const base = {
         rawText: "{}",

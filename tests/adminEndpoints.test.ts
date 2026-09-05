@@ -25,7 +25,35 @@ describe("admin endpoints", () => {
     try {
       addReceiver(context);
       const target = addTarget(context, { handle: "example" });
-      context.routes.add({ targetId: target, guildId: "g", channelId: "c" });
+      const route = context.routes.add({ targetId: target, guildId: "g", channelId: "c" }).route;
+      context.backlog.ensure(target);
+      context.backlog.startFromLatest(target, "cursor-1", "2026-09-03T00:00:00.000Z");
+      context.deliveries.enqueue({
+        targetId: target,
+        routeId: route.id,
+        postId: "1",
+        postUrl: "https://x.com/example/status/1",
+        kindsJson: '["posts"]',
+        postCreatedAt: "2026-09-03T00:00:00.000Z",
+        source: "internal_graphql",
+        sourceRecordId: 1,
+        queuedAt: "2026-09-03T00:00:00.000Z",
+      });
+      for (const postId of ["2", "3"]) {
+        context.deliveries.enqueue({
+          targetId: target,
+          routeId: route.id,
+          postId,
+          postUrl: `https://x.com/example/status/${postId}`,
+          kindsJson: '["posts"]',
+          postCreatedAt: "2026-09-03T00:00:00.000Z",
+          source: "internal_graphql",
+          sourceRecordId: Number(postId),
+          queuedAt: "2026-09-03T00:00:00.000Z",
+        });
+      }
+      context.db.query("UPDATE delivery_queue SET state = 'sending' WHERE post_id = '2'").run();
+      context.db.query("UPDATE delivery_queue SET state = 'failed' WHERE post_id = '3'").run();
       const router = createAdminRouter({
         adminApiSecret: SECRET,
         ...context,
@@ -50,6 +78,14 @@ describe("admin endpoints", () => {
       const targets = await router(await signedRequest(`${base}/admin/targets`));
       expect(await targets.json()).toMatchObject({
         routes: [{ handle: "example", channelId: "c" }],
+      });
+
+      const backlog = await router(await signedRequest(`${base}/admin/backlog`));
+      expect(await backlog.json()).toMatchObject({
+        queue: { pending: 1, sending: 1, failed: 1 },
+        progress: [
+          { targetHandle: "example", nextCursor: "cursor-1", lastStopReason: "page_saved" },
+        ],
       });
 
       const receivers = await router(await signedRequest(`${base}/admin/receivers`));

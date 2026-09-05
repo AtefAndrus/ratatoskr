@@ -1,9 +1,17 @@
-import type { DeliveryRepository, DeliverySource } from "../db/repositories/deliveries";
+import { setTimeout as delay } from "node:timers/promises";
+
+import type {
+  DeliveryRepository,
+  DeliverySource,
+  NewQueuedDelivery,
+} from "../db/repositories/deliveries";
 import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/guildSettings";
 import type { RouteRecord, RouteRepository } from "../db/repositories/routes";
 import { isKindAllowed, type PostKind, type RouteKinds } from "../postKinds";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
+
+const DELIVERY_RETRY_INTERVAL_MS = 30_000;
 
 export interface DiscordPostSender {
   sendPostUrl(channelId: string, postUrl: string): Promise<{ messageId: string }>;
@@ -30,7 +38,20 @@ export interface DeliverablePost {
   /** 通知主体側の投稿 ID。リポストでは元投稿ではなくリポスト自体の ID で、重複排除キーに使う。 */
   postId: string;
   postUrl: string;
+  createdAt?: string | null;
   kinds: PostKindsSource;
+}
+
+interface EnqueuedPost {
+  postId: string;
+  queuedRoutes: Array<{ id: number; routeId: number }>;
+  result: DeliveryResult;
+}
+
+interface PreparedPost {
+  postId: string;
+  queueInputs: NewQueuedDelivery[];
+  result: DeliveryResult;
 }
 
 export function xSnowflakeTimestampMs(postId: string): number | null {
@@ -54,101 +75,197 @@ export function rewritePostUrl(postUrl: string, linkDomain: LinkDomain): string 
   return parsed.toString();
 }
 
-export function isPostOnOrAfter(postId: string, boundary: string): boolean {
-  const postTimestampMs = xSnowflakeTimestampMs(postId);
-  const boundaryMs = new Date(boundary).getTime();
-  if (!Number.isFinite(boundaryMs)) throw new Error(`Discord 配信開始時刻が不正です: ${boundary}`);
-  return postTimestampMs !== null && postTimestampMs >= boundaryMs;
-}
-
-/**
- * 投稿 URL を該当する全経路へ一度ずつ送る。
- * 経路と投稿 ID の組を claim として先に確保するため、Web Push と内部 GraphQL の両方が
- * 同じ投稿を検出しても、またプロセスを再起動しても同じチャンネルへは一度しか送らない。
- */
+/** Discord 受理後から送信済み状態の保存までに停止した場合は、欠落を避けるため再送する。 */
 export class DeliveryService {
+  private draining: Promise<void> | null = null;
+
   constructor(
     private readonly routes: RouteRepository,
     private readonly deliveries: DeliveryRepository,
     private readonly sender: DiscordPostSender,
     private readonly guildSettings: GuildSettingsRepository | null = null,
-  ) {}
+  ) {
+    this.deliveries.recoverSending(new Date().toISOString());
+  }
+
+  async run(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      await this.drain();
+      await delay(DELIVERY_RETRY_INTERVAL_MS, undefined, { signal }).catch(() => undefined);
+    }
+  }
 
   async deliver(
     post: DeliverablePost,
     attemptedAt = new Date().toISOString(),
   ): Promise<DeliveryResult> {
+    return await this.deliverBatch([post], attemptedAt);
+  }
+
+  async deliverBatch(
+    posts: readonly DeliverablePost[],
+    attemptedAt: string,
+    afterEnqueue: () => void = () => undefined,
+  ): Promise<DeliveryResult> {
+    const prepared: PreparedPost[] = [];
+    for (const post of posts) prepared.push(await this.prepare(post, attemptedAt));
+    const queueInputs = prepared.flatMap((post) => post.queueInputs);
+    const enqueued: EnqueuedPost[] = [];
+    let skipped = 0;
+    this.deliveries.enqueueBatch(queueInputs, (queueIds) => {
+      let queueIndex = 0;
+      for (const post of prepared) {
+        const queuedRoutes: Array<{ id: number; routeId: number }> = [];
+        for (const input of post.queueInputs) {
+          const queueId = queueIds[queueIndex];
+          if (queueId !== null && queueId !== undefined) {
+            queuedRoutes.push({ id: queueId, routeId: input.routeId });
+          } else {
+            this.deliveries.record({
+              source: input.source,
+              sourceRecordId: input.sourceRecordId,
+              routeId: input.routeId,
+              attemptedAt,
+              status: "skipped_duplicate",
+            });
+            post.result.skipped += 1;
+            skipped += 1;
+          }
+          queueIndex += 1;
+        }
+        enqueued.push({ postId: post.postId, queuedRoutes, result: post.result });
+      }
+      afterEnqueue();
+    });
+    for (let index = 0; index < skipped; index += 1) {
+      metrics.increment("delivery.skipped_duplicate");
+    }
+    await this.drainEnqueued(
+      enqueued.flatMap((post) => post.queuedRoutes.map((route) => route.id)),
+    );
+    const result: DeliveryResult = { sent: 0, failed: 0, skipped: 0, filtered: 0 };
+    for (const post of enqueued) {
+      result.skipped += post.result.skipped;
+      result.filtered += post.result.filtered;
+      for (const route of post.queuedRoutes) {
+        const state = this.deliveries.queueState(route.routeId, post.postId);
+        if (state === "sent") result.sent += 1;
+        else if (state === "failed") result.failed += 1;
+      }
+    }
+    return result;
+  }
+
+  private async prepare(post: DeliverablePost, attemptedAt: string): Promise<PreparedPost> {
     const routes = dedupeByChannel(this.routes.listEnabledByTarget(post.targetId));
     const result: DeliveryResult = { sent: 0, failed: 0, skipped: 0, filtered: 0 };
     const kinds = new KindsResolver(post.kinds);
+    const queueInputs: NewQueuedDelivery[] = [];
     for (const route of routes) {
       if (!(await kinds.isAllowed(route.kinds))) {
         metrics.increment("delivery.filtered");
         result.filtered += 1;
         continue;
       }
-      const dedupeKey = `post:${post.postId}`;
-      const claimed = this.deliveries.claim({
-        source: post.source,
-        sourceRecordId: post.sourceRecordId,
-        routeId: route.id,
-        dedupeKey,
-        claimedAt: attemptedAt,
-      });
-      if (!claimed) {
-        this.deliveries.record({
-          source: post.source,
-          sourceRecordId: post.sourceRecordId,
-          routeId: route.id,
-          attemptedAt,
-          status: "skipped_duplicate",
-        });
-        metrics.increment("delivery.skipped_duplicate");
-        result.skipped += 1;
+      const createdAt =
+        post.createdAt === undefined
+          ? attemptedAt
+          : (post.createdAt ?? createdAtFromPostId(post.postId));
+      if (
+        createdAt === null ||
+        new Date(createdAt).getTime() < new Date(route.createdAt).getTime()
+      ) {
+        result.filtered += 1;
         continue;
       }
+      const resolvedKinds = await kinds.forQueue(route.kinds);
+      queueInputs.push({
+        targetId: post.targetId,
+        routeId: route.id,
+        postId: post.postId,
+        postUrl: post.postUrl,
+        kindsJson: JSON.stringify(resolvedKinds),
+        postCreatedAt: createdAt,
+        source: post.source,
+        sourceRecordId: post.sourceRecordId,
+        queuedAt: attemptedAt,
+      });
+    }
+    return { postId: post.postId, queueInputs, result };
+  }
+
+  async drain(includeFailed = true): Promise<void> {
+    if (this.draining !== null) return await this.draining;
+    this.draining = this.drainReady(includeFailed).finally(() => {
+      this.draining = null;
+    });
+    return await this.draining;
+  }
+
+  private async drainReady(includeFailed: boolean): Promise<void> {
+    const readyIds = this.deliveries.listReadyIds(includeFailed);
+    await this.sendReadyIds(readyIds);
+  }
+
+  private async drainEnqueued(ids: readonly number[]): Promise<void> {
+    while (this.draining !== null) await this.draining;
+    this.draining = this.sendReadyIds(ids).finally(() => {
+      this.draining = null;
+    });
+    await this.draining;
+  }
+
+  private async sendReadyIds(readyIds: readonly number[]): Promise<void> {
+    for (const id of readyIds) {
+      const attemptedAt = new Date().toISOString();
+      const queued = this.deliveries.claimQueued(id, attemptedAt);
+      if (queued === null) continue;
       try {
-        const linkDomain = this.guildSettings?.get(route.guildId).linkDomain ?? "x.com";
+        const linkDomain = this.guildSettings?.get(queued.guildId).linkDomain ?? "x.com";
         const sent = await this.sender.sendPostUrl(
-          route.channelId,
-          rewritePostUrl(post.postUrl, linkDomain),
+          queued.channelId,
+          rewritePostUrl(queued.postUrl, linkDomain),
         );
         this.deliveries.record({
-          source: post.source,
-          sourceRecordId: post.sourceRecordId,
-          routeId: route.id,
+          source: queued.source,
+          sourceRecordId: queued.sourceRecordId,
+          routeId: queued.routeId,
           attemptedAt,
           status: "sent",
           discordMessageId: sent.messageId,
         });
-        this.deliveries.markSent(route.id, dedupeKey);
+        this.deliveries.markQueueSent(
+          queued.id,
+          queued.routeId,
+          queued.postId,
+          sent.messageId,
+          new Date().toISOString(),
+        );
         metrics.increment("delivery.sent");
-        result.sent += 1;
         logger.info("Delivered post", {
-          source: post.source,
-          channelId: route.channelId,
-          postUrl: post.postUrl,
+          source: queued.source,
+          channelId: queued.channelId,
+          postUrl: queued.postUrl,
         });
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         this.deliveries.record({
-          source: post.source,
-          sourceRecordId: post.sourceRecordId,
-          routeId: route.id,
+          source: queued.source,
+          sourceRecordId: queued.sourceRecordId,
+          routeId: queued.routeId,
           attemptedAt,
           status: "failed",
-          error: error instanceof Error ? error.message : String(error),
+          error: message,
         });
-        this.deliveries.release(route.id, dedupeKey);
+        this.deliveries.markQueueFailed(queued.id, message, new Date().toISOString());
         metrics.increment("delivery.failed");
-        result.failed += 1;
         logger.warn("Delivery failed", {
-          channelId: route.channelId,
-          postUrl: post.postUrl,
+          channelId: queued.channelId,
+          postUrl: queued.postUrl,
           error,
         });
       }
     }
-    return result;
   }
 }
 
@@ -171,6 +288,16 @@ class KindsResolver {
     });
     return isKindAllowed(routeKinds, await this.resolved);
   }
+
+  async forQueue(routeKinds: RouteKinds): Promise<readonly PostKind[]> {
+    if (typeof this.source !== "function") return this.source;
+    if (routeKinds.posts === routeKinds.quotes) return ["posts", "quotes"];
+    this.resolved ??= this.source().catch((error: unknown) => {
+      logger.warn("Post kind resolution failed; treating as post or quote", { error });
+      return ["posts", "quotes"] as const;
+    });
+    return await this.resolved;
+  }
 }
 
 function dedupeByChannel(routes: RouteRecord[]): RouteRecord[] {
@@ -179,4 +306,9 @@ function dedupeByChannel(routes: RouteRecord[]): RouteRecord[] {
     if (!byChannel.has(route.channelId)) byChannel.set(route.channelId, route);
   }
   return [...byChannel.values()];
+}
+
+function createdAtFromPostId(postId: string): string | null {
+  const milliseconds = xSnowflakeTimestampMs(postId);
+  return milliseconds === null ? null : new Date(milliseconds).toISOString();
 }

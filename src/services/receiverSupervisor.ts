@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { AutopushUaidChangedError, listenAutopush, registerAutopush } from "../autopush/client";
 import type { AdminAlertSender } from "../bot/alertSender";
+import type { BacklogRepository } from "../db/repositories/backlog";
 import type { ExchangeRepository } from "../db/repositories/exchanges";
 import type { InternalGraphqlRepository } from "../db/repositories/internalGraphql";
 import type { NotificationRepository } from "../db/repositories/notifications";
@@ -56,10 +57,10 @@ export interface ReceiverSupervisorDependencies {
   exchanges: ExchangeRepository;
   notifications: NotificationRepository;
   observations: InternalGraphqlRepository;
+  backlog: BacklogRepository;
   delivery: DeliveryService | null;
   internalGraphqlConfiguration: InternalGraphqlConfigurationProvider;
   internalPollEnabled: boolean;
-  deliveryNotBefore: string;
   /** 未設定なら通知しない。 */
   alerts?: AdminAlertSender;
 }
@@ -393,8 +394,8 @@ export class ReceiverSupervisor {
           ),
           targets: this.deps.targets,
           observations: this.deps.observations,
+          backlog: this.deps.backlog,
           delivery: this.deps.delivery,
-          deliveryNotBefore: this.deps.deliveryNotBefore,
           selectTargets: (targets) => assignTargets(targets, receiverId, this.pollingReceiverIds),
           onPollResponse: (responseStatus) => {
             this.recordAuthOutcome(entry, authOutcomeOfResponse(responseStatus));
@@ -494,7 +495,6 @@ export class ReceiverSupervisor {
       notifications: this.deps.notifications,
       targets: this.deps.targets,
       delivery: this.deps.delivery,
-      deliveryNotBefore: this.deps.deliveryNotBefore,
       classifyPost: (postId) => this.classifyPost(receiverId, client, postId),
     });
     let reconnectDelay = MIN_RECONNECT_DELAY_MS;
