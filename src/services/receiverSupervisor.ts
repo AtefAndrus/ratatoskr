@@ -11,6 +11,7 @@ import { WebPushPipeline } from "../pipeline/webpushPipeline";
 import { kindsFromInternalTypes, type PostKind } from "../postKinds";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
+import { SharedPromiseCache } from "../utils/sharedPromiseCache";
 import { generateWebPushKeys } from "../webpush/keys";
 import type { InternalGraphqlConfigurationProvider } from "../x/internalGraphql";
 import { XInternalGraphqlClient } from "../x/internalGraphql";
@@ -23,6 +24,8 @@ const TARGET_RECONCILE_INTERVAL_MS = 10 * 60_000;
 const MIN_RECONNECT_DELAY_MS = 5_000;
 const MAX_RECONNECT_DELAY_MS = 5 * 60_000;
 const PROVISION_RETRY_DELAY_MS = 5 * 60_000;
+/** 種別を覚えておく投稿の件数。通知が届いてから配信するまでの間だけ効けばよいので小さくてよい。 */
+const POST_KIND_CACHE_LIMIT = 500;
 
 export interface ReceiverStatus {
   label: string;
@@ -58,6 +61,7 @@ interface RunningReceiver {
  */
 export class ReceiverSupervisor {
   private readonly running = new Map<number, RunningReceiver>();
+  private readonly postKinds = new SharedPromiseCache<readonly PostKind[]>(POST_KIND_CACHE_LIMIT);
   private reconcileRequested: (() => void) | null = null;
 
   constructor(private readonly deps: ReceiverSupervisorDependencies) {}
@@ -112,8 +116,22 @@ export class ReceiverSupervisor {
     return result.after;
   }
 
+  /**
+   * 投稿 1 件の種別を、受信アカウントをまたいで一度だけ解決する。
+   * 受信アカウントは全員が同じ投稿の通知を受け取るため、経路単位の重複排除より前に走るこの取得だけが
+   * 受信台数分だけ重複する。解決中の Promise ごと共有して 1 回に畳む。
+   * 投稿の種別は後から変わらないので、期限切れは設けず件数だけで打ち切る。
+   */
+  private classifyPost(
+    receiverId: number,
+    client: XInternalGraphqlClient,
+    postId: string,
+  ): Promise<readonly PostKind[]> {
+    return this.postKinds.get(postId, () => this.fetchPostKinds(receiverId, client, postId));
+  }
+
   /** 投稿 1 件を内部 GraphQL で引いて種別を確定する。応答は調査用に外部交換記録へ残す。 */
-  private async classifyPost(
+  private async fetchPostKinds(
     receiverId: number,
     client: XInternalGraphqlClient,
     postId: string,
