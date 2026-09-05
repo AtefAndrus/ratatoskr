@@ -240,11 +240,13 @@ const MIGRATIONS: ReadonlyArray<(database: Database) => void> = [
       SELECT routes.target_id, claims.route_id, substr(claims.dedupe_key, 6),
              'https://x.com/' || targets.handle || '/status/' || substr(claims.dedupe_key, 6),
              '["posts"]', claims.claimed_at, claims.source, claims.source_record_id,
-             'sent', 1, claims.claimed_at, claims.claimed_at, claims.claimed_at
+             claims.state, CASE WHEN claims.state = 'sent' THEN 1 ELSE 0 END,
+             CASE WHEN claims.state = 'sent' THEN claims.claimed_at ELSE NULL END,
+             claims.claimed_at, claims.claimed_at
       FROM delivery_claims AS claims
       JOIN routes ON routes.id = claims.route_id
       JOIN watch_targets AS targets ON targets.id = routes.target_id
-      WHERE claims.state = 'sent' AND claims.dedupe_key LIKE 'post:%';
+      WHERE claims.dedupe_key LIKE 'post:%';
 
       CREATE TABLE backlog_progress (
         target_id INTEGER PRIMARY KEY REFERENCES watch_targets(id) ON DELETE CASCADE,

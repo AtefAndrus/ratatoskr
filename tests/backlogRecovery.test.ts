@@ -130,6 +130,165 @@ describe("停止中投稿の補完", () => {
     }
   });
 
+  test("完了後の次回起動で直前の通常取得を境界に再開し、新しい投稿先の登録時刻を守る", async () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const targetId = addTarget(context, { userId: "42", handle: "example" });
+      context.routes.add({ targetId, guildId: "g", channelId: "old-channel" });
+      setRouteCreatedAt(context.db, targetId, "2026-09-01T00:00:00.000Z");
+      seedSuccessfulObservation(context.db, receiverId, targetId, [
+        "known-1",
+        "known-2",
+        "known-3",
+      ]);
+      context.backlog.ensure(targetId, "2026-09-03T00:00:00.000Z");
+      context.backlog.startFromLatest(targetId, "first-cursor", "2026-09-03T00:00:01.000Z");
+      context.backlog.acquire(
+        targetId,
+        receiverId,
+        "2026-09-03T00:00:02.000Z",
+        "2026-09-03T00:01:02.000Z",
+      );
+      context.backlog.savePage({
+        targetId,
+        receiverId,
+        requestedCursor: "first-cursor",
+        bottomCursor: "older-cursor",
+        regularPostIds: ["known-1", "known-2", "known-3"],
+        now: "2026-09-03T00:00:03.000Z",
+      });
+      seedSuccessfulObservation(
+        context.db,
+        receiverId,
+        targetId,
+        ["boundary-1", "boundary-2", "boundary-3"],
+        "2026-09-03T12:00:00.000Z",
+      );
+      seedSuccessfulObservation(
+        context.db,
+        receiverId,
+        targetId,
+        ["older-1", "older-2", "older-3"],
+        "2026-09-03T13:00:00.000Z",
+        "older-cursor",
+      );
+      const newRoute = context.routes.add({
+        targetId,
+        guildId: "g",
+        channelId: "new-channel",
+      }).route;
+      setRouteCreatedAtById(context.db, newRoute.id, "2026-09-04T00:00:00.000Z");
+
+      const controller = new AbortController();
+      const requests: Array<string | null> = [];
+      const client = {
+        async fetchUserTweetsAndReplies(
+          _target: { userId: string; handle: string },
+          cursor?: string,
+        ): Promise<InternalTimelineFetchResult> {
+          requests.push(cursor ?? null);
+          if (cursor === undefined) {
+            return page(
+              [
+                postAt("offline-before-route", "2026-09-03T18:00:00.000Z"),
+                postAt("offline-after-route", "2026-09-04T12:00:00.000Z"),
+              ],
+              "second-cursor",
+              ["offline-before-route", "offline-after-route"],
+              499,
+            );
+          }
+          controller.abort();
+          return page(
+            [
+              postAt("boundary-1", "2026-09-03T11:59:57.000Z"),
+              postAt("boundary-2", "2026-09-03T11:59:58.000Z"),
+              postAt("boundary-3", "2026-09-03T11:59:59.000Z"),
+            ],
+            "unused-cursor",
+            ["boundary-1", "boundary-2", "boundary-3"],
+            498,
+          );
+        },
+      } as XInternalGraphqlClient;
+      const sender = createRecordingSender();
+      const originalAcquire = context.backlog.acquire.bind(context.backlog);
+      const leaseDurationsMs: number[] = [];
+      context.backlog.acquire = (id, receiver, now, leaseUntil) => {
+        leaseDurationsMs.push(new Date(leaseUntil).getTime() - new Date(now).getTime());
+        return originalAcquire(id, receiver, now, leaseUntil);
+      };
+      const collector = new InternalPollCollector({
+        receiverId,
+        receiverLabel: "receiver-a",
+        client,
+        targets: context.targets,
+        observations: context.observations,
+        backlog: context.backlog,
+        delivery: new DeliveryService(context.routes, context.deliveries, sender),
+        selectTargets: (targets) => targets,
+        scheduler: fastScheduler(),
+      });
+
+      await collector.run(controller.signal);
+
+      expect(requests).toEqual([null, "second-cursor"]);
+      expect(leaseDurationsMs).toEqual([60_000]);
+      expect(context.backlog.get(targetId)).toMatchObject({
+        state: "complete",
+        notBefore: "2026-09-03T12:00:00.000Z",
+        knownPostIds: ["boundary-1", "boundary-2", "boundary-3"],
+        pagesFetched: 1,
+        lastStopReason: "known_posts_overlap",
+      });
+      expect(sender.sent.filter((value) => value.startsWith("new-channel:"))).toEqual([
+        "new-channel:https://x.com/example/status/offline-after-route",
+      ]);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("期限内の競合を拒否し、1分のリース期限から別受信へ引き継ぐ", () => {
+    const context = createTestContext();
+    try {
+      const receiverA = addReceiver(context, "a");
+      const receiverB = addReceiver(context, "b");
+      const targetId = addTarget(context, { handle: "example" });
+      context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      context.backlog.ensure(targetId);
+      context.backlog.startFromLatest(targetId, "cursor-1", "2026-09-03T00:00:00.000Z");
+
+      expect(
+        context.backlog.acquire(
+          targetId,
+          receiverA,
+          "2026-09-03T00:00:01.000Z",
+          "2026-09-03T00:01:01.000Z",
+        ),
+      ).not.toBeNull();
+      expect(
+        context.backlog.acquire(
+          targetId,
+          receiverB,
+          "2026-09-03T00:01:00.999Z",
+          "2026-09-03T00:02:00.999Z",
+        ),
+      ).toBeNull();
+      expect(
+        context.backlog.acquire(
+          targetId,
+          receiverB,
+          "2026-09-03T00:01:01.000Z",
+          "2026-09-03T00:02:01.000Z",
+        ),
+      ).toMatchObject({ leaseReceiverId: receiverB });
+    } finally {
+      context.db.close();
+    }
+  });
+
   test("カーソル循環を完了として止め、別受信の同時取得をリースで防ぐ", () => {
     const context = createTestContext();
     try {
@@ -261,7 +420,7 @@ describe("永続送信キュー", () => {
     }
   });
 
-  test("移行時に既存のsent claimをキューへ引き継ぐ", () => {
+  test("移行時に既存のpendingとsent claimを状態ごとキューへ引き継ぐ", () => {
     const db = new Database(":memory:", { strict: true });
     try {
       db.exec(`
@@ -291,6 +450,9 @@ describe("永続送信キュー", () => {
         INSERT INTO delivery_claims VALUES (
           1, 'webpush', 9, 1, 'post:123', '2026-09-03T00:00:00.000Z', 'sent'
         );
+        INSERT INTO delivery_claims VALUES (
+          2, 'internal_graphql', 10, 1, 'post:456', '2026-09-03T00:01:00.000Z', 'pending'
+        );
         INSERT INTO internal_graphql_observations VALUES (
           1, 1, '2026-09-02T00:00:00.000Z', 200, NULL, NULL
         );
@@ -300,12 +462,30 @@ describe("永続送信キュー", () => {
       applyMigrations(db);
 
       expect(
-        db.query("SELECT post_id AS postId, state, post_url AS postUrl FROM delivery_queue").get(),
-      ).toEqual({
-        postId: "123",
-        state: "sent",
-        postUrl: "https://x.com/example/status/123",
-      });
+        db
+          .query(
+            `SELECT post_id AS postId, state, attempt_count AS attemptCount,
+                    last_attempted_at AS lastAttemptedAt, post_url AS postUrl
+             FROM delivery_queue
+             ORDER BY post_id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          postId: "123",
+          state: "sent",
+          attemptCount: 1,
+          lastAttemptedAt: "2026-09-03T00:00:00.000Z",
+          postUrl: "https://x.com/example/status/123",
+        },
+        {
+          postId: "456",
+          state: "pending",
+          attemptCount: 0,
+          lastAttemptedAt: null,
+          postUrl: "https://x.com/example/status/456",
+        },
+      ]);
       expect(
         db
           .query(
@@ -334,9 +514,13 @@ function fastScheduler(): AdaptivePollScheduler {
 }
 
 function post(postId: string) {
+  return postAt(postId, `2026-09-03T00:00:0${postId}.000Z`);
+}
+
+function postAt(postId: string, createdAt: string) {
   return {
     postId,
-    createdAt: `2026-09-03T00:00:0${postId}.000Z`,
+    createdAt,
     authorUserId: "42",
     authorHandle: "example",
     types: ["original" as const],
@@ -380,27 +564,44 @@ function setRouteCreatedAt(db: Database, targetId: number, createdAt: string): v
   });
 }
 
+function setRouteCreatedAtById(db: Database, routeId: number, createdAt: string): void {
+  db.query("UPDATE routes SET created_at = $createdAt WHERE id = $routeId").run({
+    routeId,
+    createdAt,
+  });
+}
+
 function seedSuccessfulObservation(
   db: Database,
   receiverId: number,
   targetId: number,
   postIds: string[],
+  fetchedAt = "2026-09-02T00:00:00.000Z",
+  cursor?: string,
 ): void {
-  db.query(
-    `INSERT INTO internal_graphql_observations (
+  const observation = db
+    .query(
+      `INSERT INTO internal_graphql_observations (
        receiver_id, target_id, fetched_at, completed_at, query_id, endpoint,
        variables_json, features_json, response_status
      ) VALUES (
-       $receiverId, $targetId, '2026-09-02T00:00:00.000Z', '2026-09-02T00:00:01.000Z',
-       'q', 'https://x.com/graphql', '{}', '{}', 200
-     )`,
-  ).run({ receiverId, targetId });
+       $receiverId, $targetId, $fetchedAt, $fetchedAt,
+       'q', 'https://x.com/graphql', $variablesJson, '{}', 200
+     )
+     RETURNING id`,
+    )
+    .get({
+      receiverId,
+      targetId,
+      fetchedAt,
+      variablesJson: JSON.stringify(cursor === undefined ? {} : { cursor }),
+    }) as { id: number };
   for (const postId of postIds) {
     db.query(
       `INSERT INTO internal_graphql_observation_posts (
          observation_id, post_id, types_json, referenced_post_ids_json, is_new, is_target_author
-       ) VALUES (1, $postId, '["original"]', '[]', 1, 1)`,
-    ).run({ postId });
+       ) VALUES ($observationId, $postId, '["original"]', '[]', 1, 1)`,
+    ).run({ observationId: observation.id, postId });
   }
 }
 

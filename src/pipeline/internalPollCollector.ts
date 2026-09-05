@@ -13,7 +13,7 @@ import type { XInternalGraphqlClient } from "../x/internalGraphql";
 const IDLE_WAIT_MS = 30_000;
 /** 待機を刻む上限。担当替えを取り込むまでの最大の遅れになる。 */
 const TARGET_REFRESH_INTERVAL_MS = 30_000;
-const BACKLOG_LEASE_MS = 5 * 60_000;
+const BACKLOG_LEASE_MS = 60_000;
 
 export interface InternalPollSummary {
   target: string;
@@ -66,6 +66,7 @@ export interface InternalPollCollectorDependencies {
 export class InternalPollCollector {
   private readonly scheduler: AdaptivePollScheduler;
   private readonly backfillNext = new Set<number>();
+  private readonly initializedBacklogTargets = new Set<number>();
   private readonly status: InternalPollStatus = {
     targets: [],
     lastPolledAt: null,
@@ -153,8 +154,12 @@ export class InternalPollCollector {
         return await this.pollTarget(target, signal, progress.nextCursor, progress.notBefore);
       }
     }
-    this.deps.backlog.ensure(target.id);
-    const summary = await this.pollTarget(target, signal);
+    const initializesBacklog = !this.initializedBacklogTargets.has(target.id);
+    if (initializesBacklog) this.deps.backlog.ensure(target.id);
+    const summary = await this.pollTarget(target, signal, undefined, undefined, initializesBacklog);
+    if (initializesBacklog && summary.error === null && summary.parseError === null) {
+      this.initializedBacklogTargets.add(target.id);
+    }
     const progress = this.deps.backlog.get(target.id);
     if (progress?.state === "pending" && progress.nextCursor !== null) {
       this.backfillNext.add(target.id);
@@ -165,6 +170,13 @@ export class InternalPollCollector {
   private syncTargets(): Map<string, TargetRecord> {
     const enabled = this.deps.selectTargets(this.deps.targets.listEnabled());
     const byHandle = new Map(enabled.map((target) => [target.handle, target]));
+    const enabledIds = new Set(enabled.map((target) => target.id));
+    for (const targetId of this.initializedBacklogTargets) {
+      if (!enabledIds.has(targetId)) this.initializedBacklogTargets.delete(targetId);
+    }
+    for (const targetId of this.backfillNext) {
+      if (!enabledIds.has(targetId)) this.backfillNext.delete(targetId);
+    }
     for (const state of this.scheduler.snapshot()) {
       if (!byHandle.has(state.target)) this.scheduler.removeTarget(state.target);
     }
@@ -178,6 +190,7 @@ export class InternalPollCollector {
     signal: AbortSignal,
     cursor?: string,
     backfillNotBefore?: string,
+    initializesBacklog = false,
   ): Promise<InternalPollSummary> {
     const result = await this.deps.client.fetchUserTweetsAndReplies(target, cursor);
     // 保存や配信で落ちても認証の判断材料は失わないよう、応答を得た時点で先に渡す。
@@ -225,7 +238,7 @@ export class InternalPollCollector {
             ...(backfillNotBefore === undefined ? {} : { notBefore: backfillNotBefore }),
           });
     if (cursor === undefined) {
-      if (result.error === null && result.parseError === null) {
+      if (initializesBacklog && result.error === null && result.parseError === null) {
         this.deps.backlog.startFromLatest(target.id, result.bottomCursor, result.completedAt);
       }
     } else if (result.error !== null || result.parseError !== null) {

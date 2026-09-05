@@ -52,16 +52,24 @@ export class BacklogRepository {
       .query("SELECT min(created_at) AS createdAt FROM routes WHERE target_id = $targetId")
       .get({ targetId }) as { createdAt: string | null };
     if (route.createdAt === null) return null;
+    const existing = this.get(targetId);
+    if (existing?.state === "pending") return existing;
+    const latestBaseline = existing === null ? 0 : 1;
     const baseline = this.db
       .query(
         `SELECT id, fetched_at AS fetchedAt
          FROM internal_graphql_observations
          WHERE target_id = $targetId AND fetched_at >= $routeCreatedAt
+           AND fetched_at < $now
            AND response_status = 200 AND error IS NULL AND parse_error IS NULL
-         ORDER BY fetched_at, id
+           AND ($latestBaseline = 0 OR json_type(variables_json, '$.cursor') IS NULL)
+         ORDER BY CASE WHEN $latestBaseline = 0 THEN fetched_at END,
+                  CASE WHEN $latestBaseline = 1 THEN fetched_at END DESC,
+                  CASE WHEN $latestBaseline = 0 THEN id END,
+                  CASE WHEN $latestBaseline = 1 THEN id END DESC
          LIMIT 1`,
       )
-      .get({ targetId, routeCreatedAt: route.createdAt }) as {
+      .get({ targetId, routeCreatedAt: route.createdAt, now, latestBaseline }) as {
       id: number;
       fetchedAt: string;
     } | null;
@@ -91,6 +99,22 @@ export class BacklogRepository {
         knownPostIdsJson: JSON.stringify(knownPostIds),
         now,
       });
+    if (existing !== null) {
+      this.db
+        .query(
+          `UPDATE backlog_progress
+           SET not_before = $notBefore, known_post_ids_json = $knownPostIdsJson,
+               seen_cursors_json = '[]', pages_fetched = 0, last_stop_reason = NULL,
+               lease_receiver_id = NULL, lease_until = NULL, updated_at = $now
+           WHERE target_id = $targetId AND state = 'complete'`,
+        )
+        .run({
+          targetId,
+          notBefore: baseline?.fetchedAt ?? route.createdAt,
+          knownPostIdsJson: JSON.stringify(knownPostIds),
+          now,
+        });
+    }
     return this.get(targetId);
   }
 
@@ -112,10 +136,10 @@ export class BacklogRepository {
       .query(
         `UPDATE backlog_progress
          SET next_cursor = $bottomCursor,
-             state = CASE WHEN $bottomCursor IS NULL THEN 'complete' ELSE state END,
+             state = CASE WHEN $bottomCursor IS NULL THEN 'complete' ELSE 'pending' END,
              last_stop_reason = CASE WHEN $bottomCursor IS NULL THEN 'bottom_cursor_missing' ELSE 'page_saved' END,
              updated_at = $now
-         WHERE target_id = $targetId AND state = 'pending' AND next_cursor IS NULL`,
+         WHERE target_id = $targetId AND next_cursor IS NULL`,
       )
       .run({ targetId, bottomCursor, now });
   }
