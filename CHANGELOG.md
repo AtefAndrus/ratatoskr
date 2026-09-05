@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.3.4] - 2026-09-05
+
+
+### Fixed
+
+- Watch のアカウント表示順を直す (#28)
+
+
 ## [0.3.3] - 2026-09-05
 
 
@@ -84,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.3.4]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.0...v0.3.1
