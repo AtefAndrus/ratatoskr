@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { formatKinds, watchAddedMessage, watchListMessage } from "../src/bot/messages";
+import {
+  formatKinds,
+  watchAddedMessage,
+  watchListMessage,
+  watchRemovedMessage,
+} from "../src/bot/messages";
 import { ALL_KINDS } from "../src/postKinds";
 
 describe("コマンド応答の Markdown", () => {
@@ -24,7 +29,7 @@ describe("コマンド応答の Markdown", () => {
     ).toBe(
       [
         "### 監視対象の設定を更新しました",
-        "**@livedoornews**  ライブドアニュース",
+        "[livedoornews](https://x.com/livedoornews)  ライブドアニュース",
         "- 投稿先: <#1>",
         "- 送る種別: 通常投稿, 引用, リポスト",
         "-# 除外: 返信",
@@ -60,14 +65,30 @@ describe("コマンド応答の Markdown", () => {
         "### 監視対象の一覧",
         "-# 投稿 URL のドメイン: fixupx.com",
         "",
-        "**@a**  A",
+        "[a](https://x.com/a)  A",
         "- <#1>  送る種別: すべて",
         "- <#2>  送る種別: 通常投稿, 引用, リポスト",
         "",
-        "**@b**  B",
+        "[b](https://x.com/b)  B",
         "- <#1>  送る種別: すべて",
       ].join("\n"),
     );
     expect(watchListMessage({ linkDomain: "x.com", routes: [] })).toContain("監視対象はありません");
+  });
+
+  test("削除の応答はアカウントと投稿先を追加の応答と同じ段組みで返す", () => {
+    expect(
+      watchRemovedMessage({
+        handle: "livedoornews",
+        displayName: "ライブドアニュース",
+        channelId: "1",
+      }),
+    ).toBe(
+      [
+        "### 監視対象から外しました",
+        "[livedoornews](https://x.com/livedoornews)  ライブドアニュース",
+        "- 投稿先: <#1>",
+      ].join("\n"),
+    );
   });
 });

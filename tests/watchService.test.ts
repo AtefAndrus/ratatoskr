@@ -80,16 +80,23 @@ describe("WatchService", () => {
       expect(service.remove({ handle: "example", channelId: "c1" })).toEqual({
         removed: true,
         targetDisabled: false,
+        handle: "example",
+        displayName: "EXAMPLE",
       });
-      expect(service.remove({ handle: "example", channelId: "c2" })).toEqual({
+      expect(service.remove({ handle: "@Example (EXAMPLE)", channelId: "c2" })).toEqual({
         removed: true,
         targetDisabled: true,
+        handle: "example",
+        displayName: "EXAMPLE",
       });
       expect(context.targets.listEnabled()).toEqual([]);
       expect(service.remove({ handle: "example", channelId: "c2" })).toEqual({
         removed: false,
         targetDisabled: false,
       });
+      expect(() => service.remove({ handle: "invalid handle", channelId: "c2" })).toThrow(
+        "不正な X アカウント名です: invalid handle",
+      );
 
       const revived = await service.add({ handle: "example", guildId: "g1", channelId: "c1" });
       expect(revived.target.enabled).toBe(true);

@@ -67,16 +67,20 @@ async function handleAutocomplete(
   }
   try {
     const suggestions = watchService.suggestHandles(interaction.guildId, focused.value);
-    await interaction.respond(
-      suggestions.map((suggestion) => ({
-        name: `@${suggestion.handle} (${suggestion.displayName})`.slice(0, 100),
-        value: suggestion.handle,
-      })),
-    );
+    await interaction.respond(watchAutocompleteChoices(suggestions));
   } catch (error) {
     logger.warn("Autocomplete failed", { error });
     await interaction.respond([]).catch(() => undefined);
   }
+}
+
+export function watchAutocompleteChoices(
+  suggestions: Array<{ handle: string; displayName: string }>,
+): Array<{ name: string; value: string }> {
+  return suggestions.map((suggestion) => ({
+    name: `@${suggestion.handle} (${suggestion.displayName})`.slice(0, 100),
+    value: suggestion.handle,
+  }));
 }
 
 async function handleWatch(
@@ -180,7 +184,8 @@ async function handleWatch(
     const result = watchService.remove({ handle: account, channelId: channel.id });
     const content = result.removed
       ? watchRemovedMessage({
-          handle: account.replace(/^@/, "").toLowerCase(),
+          handle: result.handle,
+          displayName: result.displayName,
           channelId: channel.id,
         })
       : errorMessage("該当する監視対象と投稿先の組はありません。");

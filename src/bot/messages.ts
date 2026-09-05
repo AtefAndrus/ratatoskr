@@ -17,7 +17,7 @@ function excludedKinds(kinds: RouteKinds): string | null {
 }
 
 function accountLine(handle: string, displayName: string): string {
-  return `**@${handle}**  ${displayName}`;
+  return `[${handle}](https://x.com/${handle})  ${displayName}`;
 }
 
 export function watchAddedMessage(input: {
@@ -37,8 +37,16 @@ export function watchAddedMessage(input: {
   ].join("\n");
 }
 
-export function watchRemovedMessage(input: { handle: string; channelId: string }): string {
-  return ["### 監視対象から外しました", `**@${input.handle}** → <#${input.channelId}>`].join("\n");
+export function watchRemovedMessage(input: {
+  handle: string;
+  displayName: string;
+  channelId: string;
+}): string {
+  return [
+    "### 監視対象から外しました",
+    accountLine(input.handle, input.displayName),
+    `- 投稿先: <#${input.channelId}>`,
+  ].join("\n");
 }
 
 export function watchListMessage(input: {

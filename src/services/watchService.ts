@@ -14,10 +14,14 @@ export interface WatchAddResult {
   configuredBy: string;
 }
 
-export interface WatchRemoveResult {
-  removed: boolean;
-  targetDisabled: boolean;
-}
+export type WatchRemoveResult =
+  | { removed: false; targetDisabled: false }
+  | {
+      removed: true;
+      targetDisabled: boolean;
+      handle: string;
+      displayName: string;
+    };
 
 export class WatchServiceError extends Error {}
 
@@ -85,7 +89,8 @@ export class WatchService {
   }
 
   remove(input: { handle: string; channelId: string }): WatchRemoveResult {
-    const target = this.targets.findByHandle(input.handle);
+    const autocompleteLabel = input.handle.match(/^(@?[a-z0-9_]{1,15}) \(.+\)$/i);
+    const target = this.targets.findByHandle(autocompleteLabel?.[1] ?? input.handle);
     if (target === null) return { removed: false, targetDisabled: false };
     const removed = this.routes.remove(target.id, input.channelId);
     let targetDisabled = false;
@@ -96,7 +101,13 @@ export class WatchService {
     }
     if (removed)
       logger.info("Watch route removed", { target: target.handle, channelId: input.channelId });
-    return { removed, targetDisabled };
+    if (!removed) return { removed: false, targetDisabled: false };
+    return {
+      removed: true,
+      targetDisabled,
+      handle: target.handle,
+      displayName: target.displayName,
+    };
   }
 
   list(guildId: string): RouteWithTarget[] {
