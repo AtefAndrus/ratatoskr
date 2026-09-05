@@ -96,14 +96,23 @@ async function handleWatch(
   }
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === "list") {
+    const messages = watchListMessage({
+      routes: watchService.list(interaction.guildId),
+      linkDomain: watchService.getLinkDomain(interaction.guildId),
+    });
     await interaction.reply({
-      content: watchListMessage({
-        routes: watchService.list(interaction.guildId),
-        linkDomain: watchService.getLinkDomain(interaction.guildId),
-      }),
+      content: messages[0]!,
       flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] },
     });
+    // 並び順のまま読ませるため、続きは並行送信せず 1 通ずつ追送する。
+    for (const content of messages.slice(1)) {
+      await interaction.followUp({
+        content,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    }
     return;
   }
 
