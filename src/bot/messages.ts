@@ -17,7 +17,7 @@ function excludedKinds(kinds: RouteKinds): string | null {
 }
 
 function accountLine(handle: string, displayName: string): string {
-  return `[@${handle}](https://x.com/${handle})  ${displayName}`;
+  return `[${handle}](https://x.com/${handle})  ${displayName}`;
 }
 
 export function watchAddedMessage(input: {
