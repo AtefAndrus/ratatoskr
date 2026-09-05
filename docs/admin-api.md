@@ -49,13 +49,23 @@ ${METHOD}\n${path}\n${canonicalQuery}\n${timestamp}
 SECRET="$ADMIN_API_SECRET"
 BASE="http://localhost:3000"
 
+# 応答は 200 のときだけ標準出力へ流す。そのまま jq へ渡すと、401 や 502 のときに
+# jq のパースエラーだけが出て状態コードも本文も見えなくなる。
 admin() {
   local path="$1" query="${2:-}"
   local ts; ts=$(date +%s%3N)
   local sig; sig=$(printf 'GET\n%s\n%s\n%s' "$path" "$query" "$ts" \
     | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $2}')
-  curl -sS "$BASE$path${query:+?$query}" \
-    -H "X-Admin-Timestamp: $ts" -H "X-Admin-Signature: sha256=$sig"
+  local response code body
+  response=$(curl -sS -w '\n%{http_code}' "$BASE$path${query:+?$query}" \
+    -H "X-Admin-Timestamp: $ts" -H "X-Admin-Signature: sha256=$sig") || return
+  code=${response##*$'\n'}
+  body=${response%$'\n'*}
+  if [ "$code" != "200" ]; then
+    printf 'HTTP %s\n%s\n' "$code" "$body" >&2
+    return 1
+  fi
+  printf '%s\n' "$body"
 }
 
 admin /admin/metrics | jq .
