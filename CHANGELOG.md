@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.4.0] - 2026-09-05
+
+
+### Changed
+
+- 監視対象の増加に耐えるようにし、認証切れを検知できるようにする (#30)
+
+
 ## [0.3.4] - 2026-09-05
 
 
@@ -18,15 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.3] - 2026-09-05
 
 
+### Changed
+
+- Watch コマンドのアカウント表示と削除処理を修正する (#25)
+
+
 ### Documentation
 
 - 永続ボリュームは初回デプロイ前に付ける理由を書く (#22)
 - 管理 API の source 一覧に x_tweet_lookup を足す (#23)
-
-
-### Fixed
-
-- Watch コマンドのアカウント表示と削除処理を修正する (#25)
 
 
 ## [0.3.2] - 2026-09-04
@@ -83,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - /watch remove の補完と、サーバー単位の投稿 URL ドメイン設定を追加する (#9)
 
 
+### Changed
+
+- README を用途順に再構成し、Discord アプリの設定値とアイコン素材を追加する (#3)
+- V0.2.0 のリリース準備 (#10)
+
+
 ### Dependencies
 
 - Update dependency jdx/mise to v2026.9.0 (#6)
@@ -92,6 +106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.4.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.4...v0.4.0
 [0.3.4]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/AtefAndrus/ratatoskr/compare/v0.3.1...v0.3.2

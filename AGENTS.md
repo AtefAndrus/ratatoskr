@@ -47,8 +47,8 @@ bun test             # bun:test
 
 - `main` への直接コミットは lefthook が止める。ブランチを切って PR にする。
 - コミットメッセージは `[type] short description` (type: feat, fix, docs, refactor, test, chore)。
-- PR タイトルと本文は日本語で書く。
-- Release: `package.json` の version を上げ、`bun run changelog` で CHANGELOG.md を生成し、タグを打って GitHub Release を公開すると Coolify へデプロイされる。
+- PR タイトルと本文は日本語で書く。PR タイトルにもコミットメッセージと同じ `[type]` を付ける。squash マージでは PR タイトルがコミット件名になり、接頭辞が無いと CHANGELOG の分類が「Changed」の受け皿に落ちる。
+- Release: `package.json` の version を上げ、`bun run changelog -- --tag v<version>` で CHANGELOG.md を生成し、タグを打って GitHub Release を公開すると Coolify へデプロイされる。`--tag` を渡さないと、そのリリースぶんが `Unreleased` のままになる。
 
 ## Gotchas
 
