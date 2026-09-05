@@ -1,5 +1,6 @@
 import { Events } from "discord.js";
 
+import { DiscordAlertSender } from "./bot/alertSender";
 import { createBotClient } from "./bot/client";
 import { registerCommands } from "./bot/commands";
 import { createInteractionCreateHandler } from "./bot/events/interactionCreate";
@@ -31,6 +32,7 @@ async function bootstrap(): Promise<void> {
   logger.info("Configuration loaded", {
     nodeEnv: config.nodeEnv,
     internalPollEnabled: config.internalPollEnabled,
+    adminAlerts: config.adminAlertChannelId !== undefined,
   });
 
   const db = openDatabase(config.databasePath);
@@ -67,6 +69,9 @@ async function bootstrap(): Promise<void> {
     internalPollEnabled: config.internalPollEnabled,
     // 起動前に作成された投稿は保存だけして送らない。AutoPush の再配信でバックログが流れるのを防ぐ。
     deliveryNotBefore: new Date().toISOString(),
+    ...(config.adminAlertChannelId === undefined
+      ? {}
+      : { alerts: new DiscordAlertSender(client, config.adminAlertChannelId) }),
   });
   const watchService = new WatchService(receivers, targets, routes, supervisor, guildSettings);
 

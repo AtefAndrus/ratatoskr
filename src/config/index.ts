@@ -49,6 +49,7 @@ const configSchema = z.object({
   databasePath: z.string().min(1).default("data/ratatoskr.db"),
   healthPort: z.coerce.number().int().min(1).max(65535).default(3000),
   adminApiSecret: z.string().min(1).optional(),
+  adminAlertChannelId: z.string().min(1).optional(),
   internalPollEnabled: booleanString.default(true),
   rawRetentionDays: z.coerce.number().int().min(1).default(1),
   retentionDays: z.coerce.number().int().min(1).default(30),
@@ -92,6 +93,11 @@ export const envVarDefinitions: EnvVarDefinition[] = [
     description: "管理 API の HMAC 共通シークレット (未設定時は /admin/* が 503)",
   },
   {
+    name: "ADMIN_ALERT_CHANNEL_ID",
+    required: false,
+    description: "受信アカウントの認証切れを知らせる Discord チャンネル ID (未設定時は通知しない)",
+  },
+  {
     name: "INTERNAL_POLL_ENABLED",
     required: false,
     description: "X 内部 GraphQL による返信補完ポーリングを行うか",
@@ -125,6 +131,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databasePath: env.DATABASE_PATH,
     healthPort: env.HEALTH_PORT,
     adminApiSecret: env.ADMIN_API_SECRET || undefined,
+    adminAlertChannelId: env.ADMIN_ALERT_CHANNEL_ID || undefined,
     internalPollEnabled: env.INTERNAL_POLL_ENABLED,
     rawRetentionDays: env.RAW_RETENTION_DAYS,
     retentionDays: env.RETENTION_DAYS,
