@@ -29,7 +29,7 @@ describe("コマンド応答の Markdown", () => {
     ).toBe(
       [
         "### 監視対象の設定を更新しました",
-        "[livedoornews](https://x.com/livedoornews)  ライブドアニュース",
+        "**ライブドアニュース ([@livedoornews](https://x.com/livedoornews))**",
         "- 投稿先: <#1>",
         "- 送る種別: 通常投稿, 引用, リポスト",
         "-# 除外: 返信",
@@ -65,11 +65,11 @@ describe("コマンド応答の Markdown", () => {
         "### 監視対象の一覧",
         "-# 投稿 URL のドメイン: fixupx.com",
         "",
-        "[a](https://x.com/a)  A",
+        "**A ([@a](https://x.com/a))**",
         "- <#1>  送る種別: すべて",
         "- <#2>  送る種別: 通常投稿, 引用, リポスト",
         "",
-        "[b](https://x.com/b)  B",
+        "**B ([@b](https://x.com/b))**",
         "- <#1>  送る種別: すべて",
       ].join("\n"),
     );
@@ -86,7 +86,7 @@ describe("コマンド応答の Markdown", () => {
     ).toBe(
       [
         "### 監視対象から外しました",
-        "[livedoornews](https://x.com/livedoornews)  ライブドアニュース",
+        "**ライブドアニュース ([@livedoornews](https://x.com/livedoornews))**",
         "- 投稿先: <#1>",
       ].join("\n"),
     );
