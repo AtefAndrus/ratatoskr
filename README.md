@@ -82,7 +82,7 @@ X (内部 GraphQL) ◀──適応ポーリング── 受信アカウント �
 | `HEALTH_PORT` | No | `3000` | `/health` と `/admin/*` の HTTP ポート |
 | `ADMIN_API_SECRET` | No | | 管理 API の HMAC 共通シークレット。未設定なら `/admin/*` は 503 |
 | `INTERNAL_POLL_ENABLED` | No | `true` | 内部 GraphQL による返信補完を行うか |
-| `RAW_RETENTION_DAYS` | No | `3` | 生応答本文を保持する日数 |
+| `RAW_RETENTION_DAYS` | No | `1` | 生応答本文を保持する日数 |
 | `RETENTION_DAYS` | No | `30` | 通知・観測・配信の記録行を保持する日数 |
 | `X_WEB_BEARER_TOKEN` | No | 組み込み値 | X Web クライアントの公開 Bearer |
 

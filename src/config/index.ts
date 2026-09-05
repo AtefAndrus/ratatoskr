@@ -50,7 +50,7 @@ const configSchema = z.object({
   healthPort: z.coerce.number().int().min(1).max(65535).default(3000),
   adminApiSecret: z.string().min(1).optional(),
   internalPollEnabled: booleanString.default(true),
-  rawRetentionDays: z.coerce.number().int().min(1).default(3),
+  rawRetentionDays: z.coerce.number().int().min(1).default(1),
   retentionDays: z.coerce.number().int().min(1).default(30),
   xWebBearerToken: z.string().min(1).default(X_WEB_BEARER_TOKEN),
 });
@@ -101,7 +101,7 @@ export const envVarDefinitions: EnvVarDefinition[] = [
     name: "RAW_RETENTION_DAYS",
     required: false,
     description: "生応答本文 (GraphQL 応答、暗号文、投稿の生 JSON) を保持する日数",
-    default: "3",
+    default: "1",
   },
   {
     name: "RETENTION_DAYS",
