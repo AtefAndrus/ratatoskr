@@ -284,6 +284,104 @@ describe("停止中投稿の補完", () => {
           "2026-09-03T00:02:01.000Z",
         ),
       ).toMatchObject({ leaseReceiverId: receiverB });
+      context.backlog.savePage({
+        targetId,
+        receiverId: receiverA,
+        requestedCursor: "cursor-1",
+        bottomCursor: "cursor-2",
+        regularPostIds: [],
+        now: "2026-09-03T00:01:01.001Z",
+      });
+      context.backlog.savePage({
+        targetId,
+        receiverId: receiverB,
+        requestedCursor: "cursor-1",
+        bottomCursor: "stale-cursor",
+        regularPostIds: [],
+        now: "2026-09-03T00:01:01.002Z",
+      });
+      expect(context.backlog.get(targetId)).toMatchObject({
+        nextCursor: "cursor-2",
+        pagesFetched: 1,
+        leaseReceiverId: null,
+      });
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("60秒を超えるDiscord送信中に別受信が次ページのリースを取得できる", async () => {
+    const context = createTestContext();
+    try {
+      const receiverA = addReceiver(context, "a");
+      const receiverB = addReceiver(context, "b");
+      const targetId = addTarget(context, { userId: "42", handle: "example" });
+      context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      setRouteCreatedAt(context.db, targetId, "2026-09-01T00:00:00.000Z");
+      context.backlog.ensure(targetId);
+      context.backlog.startFromLatest(targetId, "cursor-1", "2026-09-03T00:00:00.000Z");
+      const controller = new AbortController();
+      const requests: Array<string | null> = [];
+      const client = {
+        async fetchUserTweetsAndReplies(
+          _target: { userId: string; handle: string },
+          cursor?: string,
+        ): Promise<InternalTimelineFetchResult> {
+          requests.push(cursor ?? null);
+          return cursor === undefined
+            ? page([], "unused-latest-cursor", [], 499)
+            : page([post("1"), post("2")], "cursor-2", ["1", "2"], 498);
+        },
+      } as XInternalGraphqlClient;
+      const originalAcquire = context.backlog.acquire.bind(context.backlog);
+      let firstLeaseUntil: string | null = null;
+      context.backlog.acquire = (id, receiverId, now, leaseUntil) => {
+        const acquired = originalAcquire(id, receiverId, now, leaseUntil);
+        if (receiverId === receiverA && acquired !== null) firstLeaseUntil = leaseUntil;
+        return acquired;
+      };
+      let sendCalls = 0;
+      const delivery = new DeliveryService(context.routes, context.deliveries, {
+        async sendPostUrl() {
+          sendCalls += 1;
+          if (sendCalls > 1) return { messageId: "accepted" };
+          expect(context.deliveries.queueCounts()).toEqual({ pending: 1, sending: 1, failed: 0 });
+          expect(context.backlog.get(targetId)).toMatchObject({
+            nextCursor: "cursor-2",
+            pagesFetched: 1,
+            leaseReceiverId: null,
+          });
+          const takeoverAt = new Date(new Date(firstLeaseUntil!).getTime() + 1).toISOString();
+          const nextLeaseUntil = new Date(new Date(takeoverAt).getTime() + 60_000).toISOString();
+          expect(originalAcquire(targetId, receiverB, takeoverAt, nextLeaseUntil)).toMatchObject({
+            nextCursor: "cursor-2",
+            leaseReceiverId: receiverB,
+          });
+          controller.abort();
+          return { messageId: "accepted" };
+        },
+      });
+      const collector = new InternalPollCollector({
+        receiverId: receiverA,
+        receiverLabel: "a",
+        client,
+        targets: context.targets,
+        observations: context.observations,
+        backlog: context.backlog,
+        delivery,
+        selectTargets: (targets) => targets,
+        scheduler: fastScheduler(),
+      });
+
+      await collector.run(controller.signal);
+
+      expect(requests).toEqual([null, "cursor-1"]);
+      expect(sendCalls).toBe(2);
+      expect(context.backlog.get(targetId)).toMatchObject({
+        nextCursor: "cursor-2",
+        pagesFetched: 1,
+        leaseReceiverId: receiverB,
+      });
     } finally {
       context.db.close();
     }
@@ -348,6 +446,64 @@ describe("永続送信キュー", () => {
       await restarted.drain();
 
       expect(sender.sent.map((value) => value.split("/").at(-1))).toEqual(["1", "2"]);
+      expect(context.deliveries.queueCounts()).toEqual({ pending: 0, sending: 0, failed: 0 });
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("補完進捗とキューの確定後かつ送信前の停止から背景drainで再開する", async () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const targetId = addTarget(context, { handle: "example" });
+      const route = context.routes.add({ targetId, guildId: "g", channelId: "c" }).route;
+      context.backlog.ensure(targetId);
+      context.backlog.startFromLatest(targetId, "cursor-1", "2026-09-03T00:00:00.000Z");
+      context.backlog.acquire(
+        targetId,
+        receiverId,
+        "2026-09-03T00:00:01.000Z",
+        "2026-09-03T00:01:01.000Z",
+      );
+      context.deliveries.enqueueBatch(
+        [
+          {
+            targetId,
+            routeId: route.id,
+            postId: "1",
+            postUrl: "https://x.com/example/status/1",
+            kindsJson: '["posts"]',
+            postCreatedAt: "2026-09-03T00:00:02.000Z",
+            source: "internal_graphql",
+            sourceRecordId: 1,
+            queuedAt: "2026-09-03T00:00:03.000Z",
+          },
+        ],
+        () => {
+          context.backlog.savePage({
+            targetId,
+            receiverId,
+            requestedCursor: "cursor-1",
+            bottomCursor: "cursor-2",
+            regularPostIds: ["1"],
+            now: "2026-09-03T00:00:03.000Z",
+          });
+        },
+      );
+      const sender = createRecordingSender();
+
+      expect(sender.sent).toEqual([]);
+      expect(context.deliveries.queueCounts()).toEqual({ pending: 1, sending: 0, failed: 0 });
+      expect(context.backlog.get(targetId)).toMatchObject({
+        nextCursor: "cursor-2",
+        pagesFetched: 1,
+      });
+
+      const restarted = new DeliveryService(context.routes, context.deliveries, sender);
+      await restarted.drain();
+
+      expect(sender.sent).toEqual(["c:https://x.com/example/status/1"]);
       expect(context.deliveries.queueCounts()).toEqual({ pending: 0, sending: 0, failed: 0 });
     } finally {
       context.db.close();

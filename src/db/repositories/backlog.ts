@@ -45,7 +45,27 @@ const SELECT_PROGRESS = `
 `;
 
 export class BacklogRepository {
+  private readonly startupInitialization = new Map<number, "awaiting_latest" | "complete">();
+
   constructor(private readonly db: Database) {}
+
+  /** 同じプロセス内の collector 群で、対象ごとの起動時初期化を共有する。 */
+  prepareForStartup(targetId: number): boolean {
+    const existing = this.get(targetId);
+    if (existing === null) this.startupInitialization.delete(targetId);
+    const state = this.startupInitialization.get(targetId);
+    if (state !== undefined) return state === "awaiting_latest";
+    if (this.ensure(targetId) === null) return false;
+    this.startupInitialization.set(targetId, "awaiting_latest");
+    return true;
+  }
+
+  /** 複数 collector の通常取得が重なっても、最初の成功だけで補完開始位置を確定する。 */
+  startFromLatestOnce(targetId: number, bottomCursor: string | null, now: string): void {
+    if (this.startupInitialization.get(targetId) !== "awaiting_latest") return;
+    this.startFromLatest(targetId, bottomCursor, now);
+    this.startupInitialization.set(targetId, "complete");
+  }
 
   ensure(targetId: number, now = new Date().toISOString()): BacklogProgress | null {
     const route = this.db
@@ -172,7 +192,14 @@ export class BacklogRepository {
     now: string;
   }): void {
     const progress = this.get(input.targetId);
-    if (progress === null || progress.leaseReceiverId !== input.receiverId) return;
+    // リース所有者だけで絞ると、期限切れ後に同じカーソルを保存した先行取得の進捗を捨ててしまう。
+    if (
+      progress === null ||
+      progress.state !== "pending" ||
+      progress.nextCursor !== input.requestedCursor
+    ) {
+      return;
+    }
     const known = new Set(progress.knownPostIds);
     const overlap = input.regularPostIds.filter((postId) => known.has(postId)).length;
     const seen = new Set(progress.seenCursors);
@@ -195,11 +222,11 @@ export class BacklogRepository {
          SET next_cursor = $nextCursor, state = $state, seen_cursors_json = $seenCursorsJson,
              pages_fetched = pages_fetched + 1, last_stop_reason = $reason,
              lease_receiver_id = NULL, lease_until = NULL, updated_at = $now
-         WHERE target_id = $targetId AND lease_receiver_id = $receiverId`,
+         WHERE target_id = $targetId AND state = 'pending' AND next_cursor = $requestedCursor`,
       )
       .run({
         targetId: input.targetId,
-        receiverId: input.receiverId,
+        requestedCursor: input.requestedCursor,
         nextCursor: complete ? null : input.bottomCursor,
         state: complete ? "complete" : "pending",
         seenCursorsJson: JSON.stringify([...seen]),

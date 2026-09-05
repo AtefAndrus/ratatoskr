@@ -1,6 +1,10 @@
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { DeliveryRepository, DeliverySource } from "../db/repositories/deliveries";
+import type {
+  DeliveryRepository,
+  DeliverySource,
+  NewQueuedDelivery,
+} from "../db/repositories/deliveries";
 import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/guildSettings";
 import type { RouteRecord, RouteRepository } from "../db/repositories/routes";
 import { isKindAllowed, type PostKind, type RouteKinds } from "../postKinds";
@@ -36,6 +40,18 @@ export interface DeliverablePost {
   postUrl: string;
   createdAt?: string | null;
   kinds: PostKindsSource;
+}
+
+interface EnqueuedPost {
+  postId: string;
+  queuedRoutes: Array<{ id: number; routeId: number }>;
+  result: DeliveryResult;
+}
+
+interface PreparedPost {
+  postId: string;
+  queueInputs: NewQueuedDelivery[];
+  result: DeliveryResult;
 }
 
 export function xSnowflakeTimestampMs(postId: string): number | null {
@@ -83,10 +99,68 @@ export class DeliveryService {
     post: DeliverablePost,
     attemptedAt = new Date().toISOString(),
   ): Promise<DeliveryResult> {
+    return await this.deliverBatch([post], attemptedAt);
+  }
+
+  async deliverBatch(
+    posts: readonly DeliverablePost[],
+    attemptedAt: string,
+    afterEnqueue: () => void = () => undefined,
+  ): Promise<DeliveryResult> {
+    const prepared: PreparedPost[] = [];
+    for (const post of posts) prepared.push(await this.prepare(post, attemptedAt));
+    const queueInputs = prepared.flatMap((post) => post.queueInputs);
+    const enqueued: EnqueuedPost[] = [];
+    let skipped = 0;
+    this.deliveries.enqueueBatch(queueInputs, (queueIds) => {
+      let queueIndex = 0;
+      for (const post of prepared) {
+        const queuedRoutes: Array<{ id: number; routeId: number }> = [];
+        for (const input of post.queueInputs) {
+          const queueId = queueIds[queueIndex];
+          if (queueId !== null && queueId !== undefined) {
+            queuedRoutes.push({ id: queueId, routeId: input.routeId });
+          } else {
+            this.deliveries.record({
+              source: input.source,
+              sourceRecordId: input.sourceRecordId,
+              routeId: input.routeId,
+              attemptedAt,
+              status: "skipped_duplicate",
+            });
+            post.result.skipped += 1;
+            skipped += 1;
+          }
+          queueIndex += 1;
+        }
+        enqueued.push({ postId: post.postId, queuedRoutes, result: post.result });
+      }
+      afterEnqueue();
+    });
+    for (let index = 0; index < skipped; index += 1) {
+      metrics.increment("delivery.skipped_duplicate");
+    }
+    await this.drainEnqueued(
+      enqueued.flatMap((post) => post.queuedRoutes.map((route) => route.id)),
+    );
+    const result: DeliveryResult = { sent: 0, failed: 0, skipped: 0, filtered: 0 };
+    for (const post of enqueued) {
+      result.skipped += post.result.skipped;
+      result.filtered += post.result.filtered;
+      for (const route of post.queuedRoutes) {
+        const state = this.deliveries.queueState(route.routeId, post.postId);
+        if (state === "sent") result.sent += 1;
+        else if (state === "failed") result.failed += 1;
+      }
+    }
+    return result;
+  }
+
+  private async prepare(post: DeliverablePost, attemptedAt: string): Promise<PreparedPost> {
     const routes = dedupeByChannel(this.routes.listEnabledByTarget(post.targetId));
     const result: DeliveryResult = { sent: 0, failed: 0, skipped: 0, filtered: 0 };
     const kinds = new KindsResolver(post.kinds);
-    const queuedRoutes: number[] = [];
+    const queueInputs: NewQueuedDelivery[] = [];
     for (const route of routes) {
       if (!(await kinds.isAllowed(route.kinds))) {
         metrics.increment("delivery.filtered");
@@ -105,7 +179,7 @@ export class DeliveryService {
         continue;
       }
       const resolvedKinds = await kinds.forQueue(route.kinds);
-      const queued = this.deliveries.enqueue({
+      queueInputs.push({
         targetId: post.targetId,
         routeId: route.id,
         postId: post.postId,
@@ -116,27 +190,8 @@ export class DeliveryService {
         sourceRecordId: post.sourceRecordId,
         queuedAt: attemptedAt,
       });
-      if (!queued) {
-        this.deliveries.record({
-          source: post.source,
-          sourceRecordId: post.sourceRecordId,
-          routeId: route.id,
-          attemptedAt,
-          status: "skipped_duplicate",
-        });
-        metrics.increment("delivery.skipped_duplicate");
-        result.skipped += 1;
-        continue;
-      }
-      queuedRoutes.push(route.id);
     }
-    await this.drain(false);
-    for (const routeId of queuedRoutes) {
-      const state = this.deliveries.queueState(routeId, post.postId);
-      if (state === "sent") result.sent += 1;
-      else if (state === "failed") result.failed += 1;
-    }
-    return result;
+    return { postId: post.postId, queueInputs, result };
   }
 
   async drain(includeFailed = true): Promise<void> {
@@ -149,6 +204,18 @@ export class DeliveryService {
 
   private async drainReady(includeFailed: boolean): Promise<void> {
     const readyIds = this.deliveries.listReadyIds(includeFailed);
+    await this.sendReadyIds(readyIds);
+  }
+
+  private async drainEnqueued(ids: readonly number[]): Promise<void> {
+    while (this.draining !== null) await this.draining;
+    this.draining = this.sendReadyIds(ids).finally(() => {
+      this.draining = null;
+    });
+    await this.draining;
+  }
+
+  private async sendReadyIds(readyIds: readonly number[]): Promise<void> {
     for (const id of readyIds) {
       const attemptedAt = new Date().toISOString();
       const queued = this.deliveries.claimQueued(id, attemptedAt);

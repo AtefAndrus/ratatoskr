@@ -20,6 +20,18 @@ export interface QueuedDelivery {
   attemptCount: number;
 }
 
+export interface NewQueuedDelivery {
+  targetId: number;
+  routeId: number;
+  postId: string;
+  postUrl: string;
+  kindsJson: string;
+  postCreatedAt: string;
+  source: DeliverySource;
+  sourceRecordId: number;
+  queuedAt: string;
+}
+
 export interface DeliveryQueueCounts {
   pending: number;
   sending: number;
@@ -42,62 +54,66 @@ export interface DeliveryView {
 export class DeliveryRepository {
   constructor(private readonly db: Database) {}
 
-  enqueue(input: {
-    targetId: number;
-    routeId: number;
-    postId: string;
-    postUrl: string;
-    kindsJson: string;
-    postCreatedAt: string;
-    source: DeliverySource;
-    sourceRecordId: number;
-    queuedAt: string;
-  }): boolean {
+  enqueue(input: NewQueuedDelivery): boolean {
+    return this.db.transaction(() => this.enqueueWithinTransaction(input) !== null)();
+  }
+
+  enqueueBatch(
+    inputs: readonly NewQueuedDelivery[],
+    afterEnqueue: (queueIds: ReadonlyArray<number | null>) => void,
+  ): Array<number | null> {
     return this.db.transaction(() => {
-      const existing = this.db
-        .query("SELECT state FROM delivery_queue WHERE route_id = $routeId AND post_id = $postId")
-        .get(input) as { state: DeliveryQueueState } | null;
-      if (existing?.state === "failed") {
-        this.db
-          .query(
-            `UPDATE delivery_queue
-             SET state = 'pending', source = $source, source_record_id = $sourceRecordId,
-                 updated_at = $queuedAt
-             WHERE route_id = $routeId AND post_id = $postId AND state = 'failed'`,
-          )
-          .run(input);
-        return true;
-      }
-      if (existing !== null) return false;
-      const dedupeKey = `post:${input.postId}`;
-      const claim = this.db
-        .query(
-          "SELECT state FROM delivery_claims WHERE route_id = $routeId AND dedupe_key = $dedupeKey",
-        )
-        .get({ routeId: input.routeId, dedupeKey }) as { state: "pending" | "sent" } | null;
-      const state: DeliveryQueueState = claim?.state === "sent" ? "sent" : "pending";
-      if (claim === null) {
-        this.db
-          .query(
-            `INSERT INTO delivery_claims (
-               source, source_record_id, route_id, dedupe_key, claimed_at, state
-             ) VALUES ($source, $sourceRecordId, $routeId, $dedupeKey, $queuedAt, 'pending')`,
-          )
-          .run({ ...input, dedupeKey });
-      }
+      const queueIds = inputs.map((input) => this.enqueueWithinTransaction(input));
+      afterEnqueue(queueIds);
+      return queueIds;
+    })();
+  }
+
+  private enqueueWithinTransaction(input: NewQueuedDelivery): number | null {
+    const existing = this.db
+      .query("SELECT id, state FROM delivery_queue WHERE route_id = $routeId AND post_id = $postId")
+      .get({ ...input }) as { id: number; state: DeliveryQueueState } | null;
+    if (existing?.state === "failed") {
       this.db
         .query(
-          `INSERT INTO delivery_queue (
-             target_id, route_id, post_id, post_url, kinds_json, post_created_at,
-             source, source_record_id, state, created_at, updated_at
-           ) VALUES (
-             $targetId, $routeId, $postId, $postUrl, $kindsJson, $postCreatedAt,
-             $source, $sourceRecordId, $state, $queuedAt, $queuedAt
-           )`,
+          `UPDATE delivery_queue
+           SET state = 'pending', source = $source, source_record_id = $sourceRecordId,
+               updated_at = $queuedAt
+           WHERE route_id = $routeId AND post_id = $postId AND state = 'failed'`,
         )
-        .run({ ...input, state });
-      return state !== "sent";
-    })();
+        .run({ ...input });
+      return existing.id;
+    }
+    if (existing !== null) return null;
+    const dedupeKey = `post:${input.postId}`;
+    const claim = this.db
+      .query(
+        "SELECT state FROM delivery_claims WHERE route_id = $routeId AND dedupe_key = $dedupeKey",
+      )
+      .get({ routeId: input.routeId, dedupeKey }) as { state: "pending" | "sent" } | null;
+    const state: DeliveryQueueState = claim?.state === "sent" ? "sent" : "pending";
+    if (claim === null) {
+      this.db
+        .query(
+          `INSERT INTO delivery_claims (
+             source, source_record_id, route_id, dedupe_key, claimed_at, state
+           ) VALUES ($source, $sourceRecordId, $routeId, $dedupeKey, $queuedAt, 'pending')`,
+        )
+        .run({ ...input, dedupeKey });
+    }
+    const inserted = this.db
+      .query(
+        `INSERT INTO delivery_queue (
+           target_id, route_id, post_id, post_url, kinds_json, post_created_at,
+           source, source_record_id, state, created_at, updated_at
+         ) VALUES (
+           $targetId, $routeId, $postId, $postUrl, $kindsJson, $postCreatedAt,
+           $source, $sourceRecordId, $state, $queuedAt, $queuedAt
+         )
+         RETURNING id`,
+      )
+      .get({ ...input, state }) as { id: number };
+    return state === "sent" ? null : inserted.id;
   }
 
   recoverSending(recoveredAt: string): number {

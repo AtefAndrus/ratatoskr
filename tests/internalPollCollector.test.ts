@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { BacklogRepository } from "../src/db/repositories/backlog";
 import type { NewTargetPost } from "../src/db/repositories/internalGraphql";
 import {
   deliverNewInternalPosts,
@@ -145,6 +146,82 @@ describe("内部 GraphQL からの Discord 通知", () => {
     }
   });
 
+  test("同一起動の2collectorは対象の補完初期化を一度だけ共有する", async () => {
+    const context = createTestContext();
+    try {
+      const receiverA = addReceiver(context, "a");
+      const receiverB = addReceiver(context, "b");
+      const targetId = addTarget(context, { userId: "42", handle: "example" });
+      context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      context.backlog.ensure(targetId);
+      context.backlog.startFromLatest(targetId, null, "2026-09-05T00:00:00.000Z");
+      const originalEnsure = context.backlog.ensure.bind(context.backlog);
+      let ensureCalls = 0;
+      context.backlog.ensure = (id, now) => {
+        ensureCalls += 1;
+        return originalEnsure(id, now);
+      };
+      const runOnce = async (
+        backlog: BacklogRepository,
+        receiverId: number,
+        label: string,
+        bottomCursor: string,
+      ) => {
+        const controller = new AbortController();
+        const client = {
+          async fetchUserTweetsAndReplies(): Promise<InternalTimelineFetchResult> {
+            controller.abort();
+            return emptyTimelinePage(bottomCursor);
+          },
+        } as unknown as XInternalGraphqlClient;
+        const collector = new InternalPollCollector({
+          receiverId,
+          receiverLabel: label,
+          client,
+          targets: context.targets,
+          observations: context.observations,
+          backlog,
+          delivery: null,
+          selectTargets: (targets) => targets,
+        });
+        await collector.run(controller.signal);
+      };
+
+      await runOnce(context.backlog, receiverA, "a", "cursor-a");
+      await runOnce(context.backlog, receiverB, "b", "cursor-b");
+
+      expect(ensureCalls).toBe(1);
+      expect(context.backlog.get(targetId)).toMatchObject({
+        state: "pending",
+        nextCursor: "cursor-a",
+      });
+      context.backlog.acquire(
+        targetId,
+        receiverA,
+        "2026-09-05T00:00:01.000Z",
+        "2026-09-05T00:01:01.000Z",
+      );
+      context.backlog.savePage({
+        targetId,
+        receiverId: receiverA,
+        requestedCursor: "cursor-a",
+        bottomCursor: null,
+        regularPostIds: [],
+        now: "2026-09-05T00:00:02.000Z",
+      });
+
+      const restartedBacklog = new BacklogRepository(context.db);
+      await runOnce(restartedBacklog, receiverA, "a-restarted", "cursor-after-restart");
+
+      expect(restartedBacklog.get(targetId)).toMatchObject({
+        state: "pending",
+        nextCursor: "cursor-after-restart",
+      });
+    } finally {
+      context.db.close();
+    }
+  });
+
   test("担当外の監視対象は取得せず、取得ごとに HTTP ステータスを報告する", async () => {
     const context = createTestContext();
     try {
@@ -280,5 +357,27 @@ function createPost(
     typesJson: JSON.stringify(types),
     referencedPostIdsJson: JSON.stringify(referencedPostIds),
     referencedAuthorHandle,
+  };
+}
+
+function emptyTimelinePage(bottomCursor: string): InternalTimelineFetchResult {
+  return {
+    fetchedAt: "2026-09-05T00:00:00.000Z",
+    completedAt: "2026-09-05T00:00:00.500Z",
+    queryId: "q",
+    endpoint: "https://x.com/i/api/graphql/q/UserTweetsAndReplies",
+    variables: {},
+    features: {},
+    transactionId: null,
+    responseStatus: 200,
+    responseText: "{}",
+    rateLimitLimit: 50,
+    rateLimitRemaining: 49,
+    rateLimitResetAt: null,
+    error: null,
+    parseError: null,
+    regularPostIds: [],
+    bottomCursor,
+    posts: [],
   };
 }

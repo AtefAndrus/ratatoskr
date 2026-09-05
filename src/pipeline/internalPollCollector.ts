@@ -66,7 +66,6 @@ export interface InternalPollCollectorDependencies {
 export class InternalPollCollector {
   private readonly scheduler: AdaptivePollScheduler;
   private readonly backfillNext = new Set<number>();
-  private readonly initializedBacklogTargets = new Set<number>();
   private readonly status: InternalPollStatus = {
     targets: [],
     lastPolledAt: null,
@@ -147,19 +146,16 @@ export class InternalPollCollector {
     signal: AbortSignal,
   ): Promise<InternalPollSummary> {
     if (this.backfillNext.delete(target.id)) {
-      const now = new Date().toISOString();
-      const leaseUntil = new Date(Date.now() + BACKLOG_LEASE_MS).toISOString();
+      const nowMs = Date.now();
+      const now = new Date(nowMs).toISOString();
+      const leaseUntil = new Date(nowMs + BACKLOG_LEASE_MS).toISOString();
       const progress = this.deps.backlog.acquire(target.id, this.deps.receiverId, now, leaseUntil);
       if (progress !== null && progress.nextCursor !== null) {
         return await this.pollTarget(target, signal, progress.nextCursor, progress.notBefore);
       }
     }
-    const initializesBacklog = !this.initializedBacklogTargets.has(target.id);
-    if (initializesBacklog) this.deps.backlog.ensure(target.id);
+    const initializesBacklog = this.deps.backlog.prepareForStartup(target.id);
     const summary = await this.pollTarget(target, signal, undefined, undefined, initializesBacklog);
-    if (initializesBacklog && summary.error === null && summary.parseError === null) {
-      this.initializedBacklogTargets.add(target.id);
-    }
     const progress = this.deps.backlog.get(target.id);
     if (progress?.state === "pending" && progress.nextCursor !== null) {
       this.backfillNext.add(target.id);
@@ -171,9 +167,6 @@ export class InternalPollCollector {
     const enabled = this.deps.selectTargets(this.deps.targets.listEnabled());
     const byHandle = new Map(enabled.map((target) => [target.handle, target]));
     const enabledIds = new Set(enabled.map((target) => target.id));
-    for (const targetId of this.initializedBacklogTargets) {
-      if (!enabledIds.has(targetId)) this.initializedBacklogTargets.delete(targetId);
-    }
     for (const targetId of this.backfillNext) {
       if (!enabledIds.has(targetId)) this.backfillNext.delete(targetId);
     }
@@ -227,37 +220,43 @@ export class InternalPollCollector {
         isTargetAuthor: post.authorUserId === target.userId ? 1 : 0,
       })),
     );
+    const saveBacklogProgress = (): void => {
+      if (cursor === undefined) {
+        if (initializesBacklog && result.error === null && result.parseError === null) {
+          this.deps.backlog.startFromLatestOnce(target.id, result.bottomCursor, result.completedAt);
+        }
+      } else if (result.error !== null || result.parseError !== null) {
+        this.deps.backlog.stop(
+          target.id,
+          this.deps.receiverId,
+          result.error ?? result.parseError ?? "unknown_error",
+          result.completedAt,
+        );
+      } else {
+        this.deps.backlog.savePage({
+          targetId: target.id,
+          receiverId: this.deps.receiverId,
+          requestedCursor: cursor,
+          bottomCursor: result.bottomCursor,
+          regularPostIds: result.regularPostIds,
+          now: result.completedAt,
+        });
+      }
+    };
     const deliveryResult =
       this.deps.delivery === null
-        ? { sent: 0, failed: 0, skipped: 0, filtered: 0, suppressed: 0 }
+        ? (() => {
+            saveBacklogProgress();
+            return { sent: 0, failed: 0, skipped: 0, filtered: 0, suppressed: 0 };
+          })()
         : await deliverNewInternalPosts({
             delivery: this.deps.delivery,
             target,
             posts: stored.targetPosts,
             attemptedAt: result.completedAt,
+            afterEnqueue: saveBacklogProgress,
             ...(backfillNotBefore === undefined ? {} : { notBefore: backfillNotBefore }),
           });
-    if (cursor === undefined) {
-      if (initializesBacklog && result.error === null && result.parseError === null) {
-        this.deps.backlog.startFromLatest(target.id, result.bottomCursor, result.completedAt);
-      }
-    } else if (result.error !== null || result.parseError !== null) {
-      this.deps.backlog.stop(
-        target.id,
-        this.deps.receiverId,
-        result.error ?? result.parseError ?? "unknown_error",
-        result.completedAt,
-      );
-    } else {
-      this.deps.backlog.savePage({
-        targetId: target.id,
-        receiverId: this.deps.receiverId,
-        requestedCursor: cursor,
-        bottomCursor: result.bottomCursor,
-        regularPostIds: result.regularPostIds,
-        now: result.completedAt,
-      });
-    }
     return {
       target: target.handle,
       observationId: stored.observationId,
@@ -283,6 +282,7 @@ export async function deliverNewInternalPosts(input: {
   posts: readonly NewTargetPost[];
   attemptedAt: string;
   notBefore?: string;
+  afterEnqueue?: () => void;
 }): Promise<InternalDeliveryResult> {
   const result: InternalDeliveryResult = {
     sent: 0,
@@ -291,28 +291,31 @@ export async function deliverNewInternalPosts(input: {
     filtered: 0,
     suppressed: 0,
   };
+  const deliverablePosts = [];
   for (const post of input.posts) {
     if (input.notBefore !== undefined && !isOnOrAfter(post.createdAt, input.notBefore)) {
       result.suppressed += 1;
       continue;
     }
-    const attempt = await input.delivery.deliver(
-      {
-        source: "internal_graphql",
-        sourceRecordId: post.id,
-        targetId: input.target.id,
-        postId: post.postId,
-        postUrl: internalPostUrl(input.target.handle, post),
-        createdAt: post.createdAt,
-        kinds: kindsFromTypesJson(post.typesJson),
-      },
-      input.attemptedAt,
-    );
-    result.sent += attempt.sent;
-    result.failed += attempt.failed;
-    result.skipped += attempt.skipped;
-    result.filtered += attempt.filtered;
+    deliverablePosts.push({
+      source: "internal_graphql" as const,
+      sourceRecordId: post.id,
+      targetId: input.target.id,
+      postId: post.postId,
+      postUrl: internalPostUrl(input.target.handle, post),
+      createdAt: post.createdAt,
+      kinds: kindsFromTypesJson(post.typesJson),
+    });
   }
+  const attempt = await input.delivery.deliverBatch(
+    deliverablePosts,
+    input.attemptedAt,
+    input.afterEnqueue,
+  );
+  result.sent += attempt.sent;
+  result.failed += attempt.failed;
+  result.skipped += attempt.skipped;
+  result.filtered += attempt.filtered;
   return result;
 }
 
