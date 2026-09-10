@@ -23,6 +23,7 @@ import {
   addTarget,
   createRecordingSender,
   createTestContext,
+  recentPostId,
 } from "./helpers/database";
 import { encryptAes128Gcm } from "./helpers/webpush";
 
@@ -51,14 +52,6 @@ function tweet(input: {
   legacy?: Record<string, unknown>;
 }): Record<string, unknown> {
   return { rest_id: input.restId, legacy: { ...input.legacy } };
-}
-
-/**
- * 投稿 ID から投稿時刻を復元して経路の作成時刻と比べるため、実在しうる snowflake を作る。
- * 固定値では経路の作成より前の投稿になり、メディアとは関係なく落ちる。
- */
-function recentPostId(offsetMs = 0): string {
-  return String((BigInt(Date.now() + offsetMs - 1_288_834_974_657) << 22n) + 1n);
 }
 
 describe("isMediaAllowed", () => {
