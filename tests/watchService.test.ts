@@ -124,4 +124,57 @@ describe("WatchService", () => {
       context.db.close();
     }
   });
+
+  test("追加はプロフィール URL を受け取り、アカウント名にして X 側設定へ渡す", async () => {
+    const context = createTestContext();
+    try {
+      addReceiver(context, "a");
+      const supervisor = createSupervisor();
+      const service = new WatchService(
+        context.receivers,
+        context.targets,
+        context.routes,
+        supervisor,
+        context.guildSettings,
+      );
+
+      const result = await service.add({
+        handle: "https://x.com/Kashiyuki_Yuki/media?filter=photo",
+        guildId: "g",
+        channelId: "c",
+      });
+
+      expect(supervisor.calls).toEqual(["a:kashiyuki_yuki"]);
+      expect(result.target.handle).toBe("kashiyuki_yuki");
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("削除は URL を受け取らない。既存の監視対象はアカウント名だけで引く", async () => {
+    const context = createTestContext();
+    try {
+      addReceiver(context, "a");
+      const service = new WatchService(
+        context.receivers,
+        context.targets,
+        context.routes,
+        createSupervisor(),
+        context.guildSettings,
+      );
+      await service.add({ handle: "example", guildId: "g", channelId: "c" });
+
+      expect(() => service.remove({ handle: "https://x.com/example", channelId: "c" })).toThrow(
+        "不正な X アカウント名です",
+      );
+      expect(() => context.targets.findByHandle("https://x.com/example")).toThrow(
+        "不正な X アカウント名です",
+      );
+      expect(service.remove({ handle: "example", channelId: "c" })).toMatchObject({
+        removed: true,
+      });
+    } finally {
+      context.db.close();
+    }
+  });
 });

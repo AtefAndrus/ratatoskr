@@ -44,12 +44,26 @@ describe("parseHandleInput", () => {
   });
 
   test("アカウント名にならないパスは弾く", () => {
-    expect(() => parseHandleInput("https://x.com/i/web/status/2095819158227210259")).toThrow(
+    for (const url of [
+      "https://x.com/i/web/status/2095819158227210259",
+      "https://x.com/home",
+      "https://x.com/login",
+      "https://x.com/signup",
+      "https://x.com/messages/1-2",
+    ]) {
+      expect(() => parseHandleInput(url)).toThrow("URL からアカウント名を特定できません");
+    }
+  });
+
+  test("パーセントエンコードされたアカウント名も読む", () => {
+    expect(parseHandleInput("https://x.com/%6Bashiyuki_yuki")).toBe("kashiyuki_yuki");
+    expect(parseHandleInput("https://x.com/kashiyuki%5Fyuki")).toBe("kashiyuki_yuki");
+    expect(() => parseHandleInput("https://x.com/%69/web/status/1")).toThrow(
       "URL からアカウント名を特定できません",
     );
-    expect(() => parseHandleInput("https://x.com/home")).toThrow(
-      "URL からアカウント名を特定できません",
-    );
+    expect(() => parseHandleInput("https://x.com/a%2Fb")).toThrow("不正な X アカウント名です");
+    // 壊れたエンコードはデコードせずに文字種検査へ渡す。
+    expect(() => parseHandleInput("https://x.com/a%ZZ")).toThrow("不正な X アカウント名です");
   });
 
   test("アカウント名が無い URL は弾く", () => {
@@ -59,12 +73,20 @@ describe("parseHandleInput", () => {
   });
 
   test("X 以外のホストはアカウント名として扱い、結果として弾かれる", () => {
-    expect(() => parseHandleInput("https://example.com/kashiyuki_yuki")).toThrow(
-      "不正な X アカウント名です",
-    );
-    expect(() => parseHandleInput("https://notx.com/kashiyuki_yuki")).toThrow(
-      "不正な X アカウント名です",
-    );
+    // ホストを名前の一部に含めるだけの URL や、www 以外のサブドメインは通さない。
+    for (const url of [
+      "https://example.com/kashiyuki_yuki",
+      "https://notx.com/kashiyuki_yuki",
+      "https://x.com.evil.example/kashiyuki_yuki",
+      "https://mobile.x.com/kashiyuki_yuki",
+      "https://x.com@evil.example/kashiyuki_yuki",
+    ]) {
+      expect(() => parseHandleInput(url)).toThrow("不正な X アカウント名です");
+    }
+  });
+
+  test("大文字のホストと末尾のスラッシュを受け付ける", () => {
+    expect(parseHandleInput("HTTPS://WWW.X.COM/Kashiyuki_Yuki/")).toBe("kashiyuki_yuki");
   });
 
   test("16 文字以上のパス要素は弾く", () => {
