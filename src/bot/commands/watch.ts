@@ -27,7 +27,9 @@ export const watchCommand = new SlashCommandBuilder()
       .addStringOption((option) =>
         option
           .setName("account")
-          .setDescription("X のアカウント名 (@ は省略可。登録済みのものは候補に出ます)")
+          .setDescription(
+            "X のアカウント名かプロフィール URL (@ は省略可。登録済みのものは候補に出ます)",
+          )
           .setRequired(true)
           .setAutocomplete(true),
       )
