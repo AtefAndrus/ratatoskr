@@ -54,6 +54,7 @@ describe("投稿 URL のドメイン設定", () => {
         postId: "1",
         postUrl: "https://x.com/example/status/1",
         kinds: ["posts"] as const,
+        mediaTypes: [],
       };
       await service.deliver(post);
       expect(

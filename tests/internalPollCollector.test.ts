@@ -114,6 +114,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
                 types: ["reply"],
                 referencedPostIds: ["1"],
                 referencedAuthorHandle: null,
+                mediaTypes: [],
                 rawResult: {},
               },
             ],
@@ -348,6 +349,7 @@ function createPost(
   types: string[] = ["original"],
   referencedPostIds: string[] = [],
   referencedAuthorHandle: string | null = null,
+  mediaTypes: string[] | null = [],
 ): NewTargetPost {
   return {
     id,
@@ -357,6 +359,7 @@ function createPost(
     typesJson: JSON.stringify(types),
     referencedPostIdsJson: JSON.stringify(referencedPostIds),
     referencedAuthorHandle,
+    mediaTypesJson: mediaTypes === null ? null : JSON.stringify(mediaTypes),
   };
 }
 

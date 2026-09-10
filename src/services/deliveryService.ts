@@ -7,6 +7,7 @@ import type {
 } from "../db/repositories/deliveries";
 import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/guildSettings";
 import type { RouteRecord, RouteRepository } from "../db/repositories/routes";
+import { isMediaAllowed, type MediaFilter, type MediaTypes } from "../mediaFilter";
 import { isKindAllowed, type PostKind, type RouteKinds } from "../postKinds";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
@@ -31,6 +32,12 @@ export interface DeliveryResult {
  */
 export type PostKindsSource = readonly PostKind[] | (() => Promise<readonly PostKind[]>);
 
+/**
+ * 投稿の添付メディア。種別とは別の軸で、どちらか一方だけが未確定になることがある。
+ * Web Push のリポストは種別が確定していてメディアだけ引く必要がある。
+ */
+export type MediaTypesSource = MediaTypes | (() => Promise<MediaTypes>);
+
 export interface DeliverablePost {
   source: DeliverySource;
   sourceRecordId: number;
@@ -40,6 +47,7 @@ export interface DeliverablePost {
   postUrl: string;
   createdAt?: string | null;
   kinds: PostKindsSource;
+  mediaTypes: MediaTypesSource;
 }
 
 interface EnqueuedPost {
@@ -160,10 +168,19 @@ export class DeliveryService {
     const routes = dedupeByChannel(this.routes.listEnabledByTarget(post.targetId));
     const result: DeliveryResult = { sent: 0, failed: 0, skipped: 0, filtered: 0 };
     const kinds = new KindsResolver(post.kinds);
+    const media = new MediaResolver(post.mediaTypes);
     const queueInputs: NewQueuedDelivery[] = [];
     for (const route of routes) {
+      // 種別で落ちる経路のためにメディアを引かない。取得は種別の判定より後に置く。
       if (!(await kinds.isAllowed(route.kinds))) {
         metrics.increment("delivery.filtered");
+        result.filtered += 1;
+        continue;
+      }
+      if (!(await media.isAllowed(route.mediaFilter))) {
+        metrics.increment("delivery.filtered");
+        metrics.increment("delivery.filtered_media");
+        if ((await media.resolve()) === null) metrics.increment("delivery.media_unknown");
         result.filtered += 1;
         continue;
       }
@@ -295,6 +312,32 @@ class KindsResolver {
     this.resolved ??= this.source().catch((error: unknown) => {
       logger.warn("Post kind resolution failed; treating as post or quote", { error });
       return ["posts", "quotes"] as const;
+    });
+    return await this.resolved;
+  }
+}
+
+/**
+ * メディアの解決を、経路の設定が本当に必要とするまで遅らせる。
+ * 種別と違い、解決できなかったときは送らない側へ倒す。
+ * 「画像付きのみ」を選んだ経路にテキストだけの投稿が混じる方が、取りこぼしより重いため。
+ * 解決結果は投稿 1 件のあいだ保持する。失敗も保持するので、同じ投稿で二度引くことはない。
+ */
+class MediaResolver {
+  private resolved: Promise<MediaTypes> | null = null;
+
+  constructor(private readonly source: MediaTypesSource) {}
+
+  async isAllowed(filter: MediaFilter): Promise<boolean> {
+    if (filter === "all") return true;
+    return isMediaAllowed(filter, await this.resolve());
+  }
+
+  async resolve(): Promise<MediaTypes> {
+    if (typeof this.source !== "function") return this.source;
+    this.resolved ??= this.source().catch((error: unknown) => {
+      logger.warn("Media resolution failed; treating as undetermined", { error });
+      return null;
     });
     return await this.resolved;
   }

@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { BacklogRepository } from "../db/repositories/backlog";
 import type { InternalGraphqlRepository, NewTargetPost } from "../db/repositories/internalGraphql";
 import type { TargetRecord, TargetRepository } from "../db/repositories/targets";
+import { mediaTypesFromJson } from "../mediaFilter";
 import { kindsFromTypesJson } from "../postKinds";
 import type { DeliveryResult, DeliveryService } from "../services/deliveryService";
 import { logger } from "../utils/logger";
@@ -216,6 +217,7 @@ export class InternalPollCollector {
         typesJson: JSON.stringify(post.types),
         referencedPostIdsJson: JSON.stringify(post.referencedPostIds),
         referencedAuthorHandle: post.referencedAuthorHandle,
+        mediaTypesJson: post.mediaTypes === null ? null : JSON.stringify(post.mediaTypes),
         rawResultJson: JSON.stringify(post.rawResult),
         isTargetAuthor: post.authorUserId === target.userId ? 1 : 0,
       })),
@@ -305,6 +307,7 @@ export async function deliverNewInternalPosts(input: {
       postUrl: internalPostUrl(input.target.handle, post),
       createdAt: post.createdAt,
       kinds: kindsFromTypesJson(post.typesJson),
+      mediaTypes: mediaTypesFromJson(post.mediaTypesJson),
     });
   }
   const attempt = await input.delivery.deliverBatch(

@@ -7,6 +7,7 @@ import {
 } from "discord.js";
 
 import { isLinkDomain } from "../../db/repositories/guildSettings";
+import { isMediaFilter } from "../../mediaFilter";
 import { POST_KINDS, type RouteKinds } from "../../postKinds";
 import { WatchServiceError, type WatchService } from "../../services/watchService";
 import { logger } from "../../utils/logger";
@@ -169,12 +170,22 @@ async function handleWatch(
       const value = interaction.options.getBoolean(kind);
       if (value !== null) kinds[kind] = value;
     }
+    const requestedMedia = interaction.options.getString("media");
+    if (requestedMedia !== null && !isMediaFilter(requestedMedia)) {
+      await interaction.deleteReply();
+      await interaction.followUp({
+        content: errorMessage("対応していないメディアの絞り込みです。"),
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
     const result = await watchService.add({
       handle: account,
       guildId: interaction.guildId,
       channelId: channel.id,
       requestedBy: interaction.user.id,
       kinds,
+      ...(requestedMedia === null ? {} : { mediaFilter: requestedMedia }),
     });
     await interaction.editReply({
       content: watchAddedMessage({
@@ -182,6 +193,7 @@ async function handleWatch(
         displayName: result.target.displayName,
         channelId: channel.id,
         kinds: result.route.kinds,
+        mediaFilter: result.route.mediaFilter,
         created: result.created,
       }),
       allowedMentions: { parse: [] },

@@ -3,6 +3,7 @@ import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/gui
 import type { ReceiverRepository } from "../db/repositories/receivers";
 import type { RouteRecord, RouteRepository, RouteWithTarget } from "../db/repositories/routes";
 import type { TargetRecord, TargetRepository } from "../db/repositories/targets";
+import type { MediaFilter } from "../mediaFilter";
 import type { RouteKinds } from "../postKinds";
 import { logger } from "../utils/logger";
 import type { ReceiverSupervisor } from "./receiverSupervisor";
@@ -44,6 +45,7 @@ export class WatchService {
     channelId: string;
     requestedBy?: string;
     kinds?: Partial<RouteKinds>;
+    mediaFilter?: MediaFilter;
   }): Promise<WatchAddResult> {
     const handle = parseHandleInput(input.handle);
     const receivers = this.receivers.listEnabled();
@@ -65,6 +67,7 @@ export class WatchService {
           channelId: input.channelId,
           createdBy: input.requestedBy,
           kinds: input.kinds,
+          ...(input.mediaFilter === undefined ? {} : { mediaFilter: input.mediaFilter }),
         });
         this.supervisor.requestReconcile();
         logger.info("Watch route added", {
@@ -72,6 +75,7 @@ export class WatchService {
           channelId: input.channelId,
           created,
           kinds: route.kinds,
+          mediaFilter: route.mediaFilter,
           receiver: receiver.label,
         });
         return { target, route, created, configuredBy: receiver.label };

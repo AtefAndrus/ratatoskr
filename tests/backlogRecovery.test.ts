@@ -530,6 +530,7 @@ describe("永続送信キュー", () => {
         postUrl: "https://x.com/example/status/1",
         createdAt: new Date().toISOString(),
         kinds: ["posts"] as const,
+        mediaTypes: [],
       };
       expect(await service.deliver(deliverable)).toMatchObject({ failed: 1 });
       expect(context.deliveries.queueCounts().failed).toBe(1);
@@ -562,6 +563,7 @@ describe("永続送信キュー", () => {
           postUrl: "https://x.com/example/status/old",
           createdAt: "2026-09-02T00:00:00.000Z",
           kinds: ["posts"],
+          mediaTypes: [],
         }),
       ).toMatchObject({ filtered: 1, sent: 0 });
       enqueue(context, targetId, route.id, "pending", "2020-01-01T00:00:00.000Z");
@@ -682,6 +684,7 @@ function postAt(postId: string, createdAt: string) {
     types: ["original" as const],
     referencedPostIds: [],
     referencedAuthorHandle: null,
+    mediaTypes: [],
     rawResult: {},
   };
 }

@@ -27,6 +27,8 @@ export interface NewObservationPost {
   typesJson: string;
   referencedPostIdsJson: string;
   referencedAuthorHandle: string | null;
+  /** 添付メディアの種別を並べた JSON。判定できなかった投稿は null。 */
+  mediaTypesJson: string | null;
   rawResultJson: string;
   isTargetAuthor: number;
 }
@@ -39,6 +41,7 @@ export interface NewTargetPost {
   typesJson: string;
   referencedPostIdsJson: string;
   referencedAuthorHandle: string | null;
+  mediaTypesJson: string | null;
 }
 
 export interface ObservationView {
@@ -105,12 +108,12 @@ export class InternalGraphqlRepository {
     const insertPost = this.db.query(
       `INSERT INTO internal_graphql_observation_posts (
          observation_id, post_id, created_at, author_user_id, author_handle,
-         types_json, referenced_post_ids_json, referenced_author_handle, raw_result_json,
-         is_new, is_target_author
+         types_json, referenced_post_ids_json, referenced_author_handle, media_types_json,
+         raw_result_json, is_new, is_target_author
        ) VALUES (
          $observationId, $postId, $createdAt, $authorUserId, $authorHandle,
-         $typesJson, $referencedPostIdsJson, $referencedAuthorHandle, $rawResultJson,
-         $isNew, $isTargetAuthor
+         $typesJson, $referencedPostIdsJson, $referencedAuthorHandle, $mediaTypesJson,
+         $rawResultJson, $isNew, $isTargetAuthor
        )
        RETURNING id`,
     );
@@ -149,6 +152,7 @@ export class InternalGraphqlRepository {
             typesJson: post.typesJson,
             referencedPostIdsJson: post.referencedPostIdsJson,
             referencedAuthorHandle: post.referencedAuthorHandle,
+            mediaTypesJson: post.mediaTypesJson,
           };
           targetPosts.push(targetPost);
           if (isNew === 1) newTargetPosts.push(targetPost);
@@ -224,7 +228,8 @@ export class InternalGraphqlRepository {
         `SELECT id, post_id AS postId, created_at AS createdAt, author_user_id AS authorUserId,
                 author_handle AS authorHandle, types_json AS typesJson,
                 referenced_post_ids_json AS referencedPostIdsJson,
-                referenced_author_handle AS referencedAuthorHandle, raw_result_json AS rawResultJson,
+                referenced_author_handle AS referencedAuthorHandle,
+                media_types_json AS mediaTypesJson, raw_result_json AS rawResultJson,
                 is_new AS isNew, is_target_author AS isTargetAuthor
          FROM internal_graphql_observation_posts
          WHERE observation_id = $observationId

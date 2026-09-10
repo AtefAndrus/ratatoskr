@@ -24,6 +24,7 @@ describe("コマンド応答の Markdown", () => {
         displayName: "ライブドアニュース",
         channelId: "1",
         kinds: { ...ALL_KINDS, replies: false },
+        mediaFilter: "all" as const,
         created: false,
       }),
     ).toBe(
@@ -45,6 +46,7 @@ describe("コマンド応答の Markdown", () => {
       enabled: true,
       createdBy: null,
       createdAt: "",
+      mediaFilter: "all" as const,
     };
     const message = watchListMessage({
       linkDomain: "fixupx.com",
@@ -87,6 +89,7 @@ describe("コマンド応答の Markdown", () => {
       createdBy: null,
       createdAt: "",
       kinds: ALL_KINDS,
+      mediaFilter: "all" as const,
       channelId: "987654321098765432",
     };
     const routes = Array.from({ length: 60 }, (_, index) => ({
@@ -116,6 +119,7 @@ describe("コマンド応答の Markdown", () => {
       createdBy: null,
       createdAt: "",
       kinds: ALL_KINDS,
+      mediaFilter: "all" as const,
       handle: "example_user",
       displayName: "サンプル表示名",
       channelId: `98765432109876543${index % 10}`,

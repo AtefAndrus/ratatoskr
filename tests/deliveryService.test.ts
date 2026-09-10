@@ -16,6 +16,7 @@ describe("DeliveryService", () => {
         postId: "123",
         postUrl: "https://x.com/cloudflare/status/123",
         kinds: ["posts"] as const,
+        mediaTypes: [],
       };
 
       const results = await Promise.all([
@@ -59,6 +60,7 @@ describe("DeliveryService", () => {
         postId: "1",
         postUrl: "u",
         kinds: ["posts"] as const,
+        mediaTypes: [],
       };
 
       expect(await service.deliver(post)).toEqual({ sent: 0, failed: 1, skipped: 0, filtered: 0 });
@@ -88,6 +90,7 @@ describe("DeliveryService", () => {
         postId: "1",
         postUrl: "a1",
         kinds: ["posts"],
+        mediaTypes: [],
       });
       await service.deliver({
         source: "webpush",
@@ -96,6 +99,7 @@ describe("DeliveryService", () => {
         postId: "2",
         postUrl: "b2",
         kinds: ["posts"],
+        mediaTypes: [],
       });
 
       expect(sender.sent).toEqual(["c1:a1", "c2:a1", "c1:b2"]);
