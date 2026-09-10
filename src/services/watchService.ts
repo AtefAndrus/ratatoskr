@@ -1,4 +1,4 @@
-import { normalizeHandle } from "../db/handle";
+import { parseHandleInput } from "../db/handle";
 import type { GuildSettingsRepository, LinkDomain } from "../db/repositories/guildSettings";
 import type { ReceiverRepository } from "../db/repositories/receivers";
 import type { RouteRecord, RouteRepository, RouteWithTarget } from "../db/repositories/routes";
@@ -45,7 +45,7 @@ export class WatchService {
     requestedBy?: string;
     kinds?: Partial<RouteKinds>;
   }): Promise<WatchAddResult> {
-    const handle = normalizeHandle(input.handle);
+    const handle = parseHandleInput(input.handle);
     const receivers = this.receivers.listEnabled();
     if (receivers.length === 0) {
       throw new WatchServiceError(
