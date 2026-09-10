@@ -1,14 +1,20 @@
 import type { AutopushNotification } from "../autopush/protocol";
 import type { NotificationRepository } from "../db/repositories/notifications";
 import type { TargetRepository } from "../db/repositories/targets";
+import type { MediaTypes } from "../mediaFilter";
 import { PARSER_VERSION, parseXNotification } from "../notification/parser";
-import type { PostKind } from "../postKinds";
-import type { DeliveryService } from "../services/deliveryService";
+import { kindsFromInternalTypes, type PostKind } from "../postKinds";
+import type {
+  DeliveryService,
+  MediaTypesSource,
+  PostKindsSource,
+} from "../services/deliveryService";
 import { xSnowflakeTimestampMs } from "../services/deliveryService";
 import { decodeBase64url } from "../utils/base64url";
 import { metrics } from "../utils/metrics";
 import { decryptAes128Gcm, decryptAesGcm } from "../webpush/decrypt";
 import type { WebPushKeys } from "../webpush/keys";
+import type { InternalPostType } from "../x/internalGraphql";
 
 export type AckCode = 100 | 101 | 102;
 
@@ -17,10 +23,27 @@ export interface WebPushPipelineDependencies {
   targets: TargetRepository;
   delivery: DeliveryService | null;
   /**
-   * 通常投稿と引用を区別する必要があるときだけ呼ばれ、投稿 ID から種別を確定する。
-   * 未指定なら通常投稿か引用のどちらかとして扱い、どちらかを許可する経路へ送る。
+   * 種別かメディアの確定が必要なときだけ呼ばれ、投稿 1 件を引いて両方を返す。
+   * 未指定なら種別は通常投稿か引用のどちらか、メディアは判定不能として扱う。
    */
-  classifyPost?: (postId: string) => Promise<readonly PostKind[]>;
+  classifyPost?: (postId: string) => Promise<PostLookup>;
+}
+
+export interface PostLookup {
+  kinds: readonly PostKind[];
+  mediaTypes: MediaTypes;
+}
+
+/**
+ * 取得できた投稿から種別とメディアを取り出す。
+ * メディアが読めなくても失敗として扱わない。取得は成立していて種別は確定しており、
+ * 失敗にすると受信アカウント間で共有するキャッシュから消えて、同じ応答を何度も引き直すことになる。
+ */
+export function postLookupFromPost(post: {
+  types: readonly InternalPostType[];
+  mediaTypes: MediaTypes;
+}): PostLookup {
+  return { kinds: kindsFromInternalTypes(post.types), mediaTypes: post.mediaTypes };
 }
 
 /**
@@ -141,13 +164,20 @@ export class WebPushPipeline {
     const postId = parsed.notificationPostId ?? parsed.postId;
     // URI の投稿者が監視対象と違えばリポスト。同じなら通常投稿か引用で、ペイロードからは区別できない。
     const isRepost = parsed.authorHandle !== null && parsed.authorHandle !== target.handle;
-    const originalPostId = parsed.postId;
+    // 追加取得の対象は URI が指す投稿。リポストではこれが元投稿で、添付はそちらに付く。
+    const lookupPostId = parsed.postId;
     const classifyPost = this.deps.classifyPost;
-    const kinds: readonly PostKind[] | (() => Promise<readonly PostKind[]>) = isRepost
+    // 種別とメディアは同じ取得から出るが、独立した軸として渡す。
+    // リポストは種別が確定していて、メディアだけ引く必要がある。
+    const lookup =
+      classifyPost === undefined ? null : new SharedLookup(() => classifyPost(lookupPostId));
+    const kinds: PostKindsSource = isRepost
       ? ["reposts"]
-      : classifyPost === undefined
+      : lookup === null
         ? ["posts", "quotes"]
-        : () => classifyPost(originalPostId);
+        : async () => (await lookup.get()).kinds;
+    const mediaTypes: MediaTypesSource =
+      lookup === null ? null : async () => (await lookup.get()).mediaTypes;
     const result = await this.deps.delivery.deliver({
       source: "webpush",
       sourceRecordId: notificationId,
@@ -156,8 +186,25 @@ export class WebPushPipeline {
       postUrl: parsed.postUrl,
       createdAt: createdAtFromPostId(postId),
       kinds,
+      mediaTypes,
     });
     return result.failed > 0 ? 102 : 100;
+  }
+}
+
+/**
+ * 通知 1 件のなかで種別とメディアの両軸が同じ取得を共有する。
+ * 失敗も保持する。受信アカウント間で共有するキャッシュは失敗を捨てるので、
+ * ここで保持しないと種別の取得が失敗した直後にメディア側が同じ投稿を引き直す。
+ */
+class SharedLookup {
+  private pending: Promise<PostLookup> | null = null;
+
+  constructor(private readonly load: () => Promise<PostLookup>) {}
+
+  get(): Promise<PostLookup> {
+    this.pending ??= this.load();
+    return this.pending;
   }
 }
 

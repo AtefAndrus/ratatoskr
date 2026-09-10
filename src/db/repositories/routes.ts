@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { isMediaFilter, type MediaFilter } from "../../mediaFilter";
 import type { RouteKinds } from "../../postKinds";
 
 export interface RouteRecord {
@@ -9,6 +10,7 @@ export interface RouteRecord {
   channelId: string;
   enabled: boolean;
   kinds: RouteKinds;
+  mediaFilter: MediaFilter;
   createdBy: string | null;
   createdAt: string;
 }
@@ -28,6 +30,7 @@ interface RawRoute {
   allowQuotes: number;
   allowReposts: number;
   allowReplies: number;
+  mediaFilter: string;
   createdBy: string | null;
   createdAt: string;
 }
@@ -42,6 +45,7 @@ const ROUTE_COLUMNS = `
   routes.channel_id AS channelId, routes.enabled,
   routes.allow_posts AS allowPosts, routes.allow_quotes AS allowQuotes,
   routes.allow_reposts AS allowReposts, routes.allow_replies AS allowReplies,
+  routes.media_filter AS mediaFilter,
   routes.created_by AS createdBy, routes.created_at AS createdAt
 `;
 
@@ -66,6 +70,8 @@ function toRecord(row: RawRoute): RouteRecord {
       reposts: row.allowReposts === 1,
       replies: row.allowReplies === 1,
     },
+    // CHECK 制約が値を縛るが、既存 DB を直接書き換えられた場合は既定へ落とす。
+    mediaFilter: isMediaFilter(row.mediaFilter) ? row.mediaFilter : "all",
     createdBy: row.createdBy,
     createdAt: row.createdAt,
   };
@@ -79,8 +85,8 @@ export class RouteRepository {
   constructor(private readonly db: Database) {}
 
   /**
-   * 経路を追加する。既存の組なら有効化し、種別が指定されていればその項目だけ更新する。
-   * 種別を省略した再登録は既存の設定を変えない。
+   * 経路を追加する。既存の組なら有効化し、指定された項目だけ更新する。
+   * 種別とメディアの絞り込みを省略した再登録は、既存の設定を変えない。
    */
   add(input: {
     targetId: number;
@@ -88,6 +94,7 @@ export class RouteRepository {
     channelId: string;
     createdBy?: string;
     kinds?: Partial<RouteKinds>;
+    mediaFilter?: MediaFilter;
   }): { route: RouteRecord; created: boolean } {
     const existed = this.exists(input.targetId, input.channelId);
     const inserted = this.db
@@ -107,7 +114,14 @@ export class RouteRepository {
       const current = this.getById(inserted.id)!.kinds;
       this.updateKinds(inserted.id, { ...current, ...input.kinds });
     }
+    if (input.mediaFilter !== undefined) this.updateMediaFilter(inserted.id, input.mediaFilter);
     return { route: this.getById(inserted.id)!, created: !existed };
+  }
+
+  updateMediaFilter(id: number, mediaFilter: MediaFilter): void {
+    this.db
+      .query("UPDATE routes SET media_filter = $mediaFilter WHERE id = $id")
+      .run({ id, mediaFilter });
   }
 
   updateKinds(id: number, kinds: RouteKinds): void {

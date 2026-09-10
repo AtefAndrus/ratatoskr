@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 
 import { LINK_DOMAINS } from "../../db/repositories/guildSettings";
+import { MEDIA_FILTER_LABELS, MEDIA_FILTERS } from "../../mediaFilter";
 import { POST_KIND_LABELS } from "../../postKinds";
 
 const WATCHABLE_CHANNEL_TYPES = [
@@ -52,6 +53,17 @@ export const watchCommand = new SlashCommandBuilder()
         option
           .setName("replies")
           .setDescription(`${POST_KIND_LABELS.replies}を送るか (既定: はい)`),
+      )
+      .addStringOption((option) =>
+        option
+          .setName("media")
+          .setDescription("送るメディアを絞るか (既定: すべて)")
+          .addChoices(
+            ...MEDIA_FILTERS.map((filter) => ({
+              name: MEDIA_FILTER_LABELS[filter],
+              value: filter,
+            })),
+          ),
       ),
   )
   .addSubcommand((sub) =>

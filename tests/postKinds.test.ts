@@ -93,6 +93,7 @@ describe("投稿種別のフィルタ", () => {
           postId: "1",
           postUrl: "reply",
           kinds: ["replies"],
+          mediaTypes: [],
         }),
       ).toEqual({ sent: 1, failed: 0, skipped: 0, filtered: 2 });
       expect(
@@ -102,6 +103,7 @@ describe("投稿種別のフィルタ", () => {
           postId: "2",
           postUrl: "repost-quote",
           kinds: ["reposts", "quotes"],
+          mediaTypes: [],
         }),
       ).toEqual({ sent: 3, failed: 0, skipped: 0, filtered: 0 });
       expect(sender.sent).toEqual([
@@ -148,6 +150,7 @@ describe("投稿種別のフィルタ", () => {
           postId: "1",
           postUrl: "q",
           kinds: resolve,
+          mediaTypes: [],
         }),
       ).toEqual({ sent: 2, failed: 0, skipped: 0, filtered: 1 });
       expect(resolutions).toBe(1);
@@ -161,6 +164,7 @@ describe("投稿種別のフィルタ", () => {
           postId: "2",
           postUrl: "unknown",
           kinds: failingResolver,
+          mediaTypes: [],
         }),
       ).toEqual({ sent: 3, failed: 0, skipped: 0, filtered: 0 });
     } finally {

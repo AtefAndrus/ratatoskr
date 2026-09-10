@@ -1,5 +1,6 @@
 import type { LinkDomain } from "../db/repositories/guildSettings";
 import type { RouteWithTarget } from "../db/repositories/routes";
+import { MEDIA_FILTER_LABELS, type MediaFilter } from "../mediaFilter";
 import { POST_KIND_LABELS, POST_KINDS, type RouteKinds } from "../postKinds";
 
 /** Discord の 1 メッセージあたりの文字数上限。 */
@@ -22,6 +23,11 @@ function excludedKinds(kinds: RouteKinds): string | null {
   return excluded.map((kind) => POST_KIND_LABELS[kind]).join(", ");
 }
 
+/** メディアの絞り込みは、既定でない経路にだけ添える。 */
+function mediaSuffix(mediaFilter: MediaFilter): string {
+  return mediaFilter === "all" ? "" : `  ${MEDIA_FILTER_LABELS[mediaFilter]}`;
+}
+
 function accountLine(handle: string, displayName: string): string {
   return `**${displayName} ([@${handle}](https://x.com/${handle}))**`;
 }
@@ -31,6 +37,7 @@ export function watchAddedMessage(input: {
   displayName: string;
   channelId: string;
   kinds: RouteKinds;
+  mediaFilter: MediaFilter;
   created: boolean;
 }): string {
   const excluded = excludedKinds(input.kinds);
@@ -39,6 +46,9 @@ export function watchAddedMessage(input: {
     accountLine(input.handle, input.displayName),
     `- 投稿先: <#${input.channelId}>`,
     `- 送る種別: ${formatKinds(input.kinds)}`,
+    ...(input.mediaFilter === "all"
+      ? []
+      : [`- 送るメディア: ${MEDIA_FILTER_LABELS[input.mediaFilter]}`]),
     ...(excluded === null ? [] : [`-# 除外: ${excluded}`]),
   ].join("\n");
 }
@@ -81,7 +91,10 @@ function accountBlocks(routes: RouteWithTarget[]): string[] {
     const first = group[0]!;
     return [
       accountLine(first.handle, first.displayName),
-      ...group.map((route) => `- <#${route.channelId}>  送る種別: ${formatKinds(route.kinds)}`),
+      ...group.map(
+        (route) =>
+          `- <#${route.channelId}>  送る種別: ${formatKinds(route.kinds)}${mediaSuffix(route.mediaFilter)}`,
+      ),
     ].join("\n");
   });
 }

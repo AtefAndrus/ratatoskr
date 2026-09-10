@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const TIMESTAMP_DEFAULT = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -306,6 +306,14 @@ const MIGRATIONS: ReadonlyArray<(database: Database) => void> = [
       BEGIN
         DELETE FROM backlog_progress WHERE target_id = OLD.target_id;
       END;
+    `);
+  },
+  (database) => {
+    database.exec(`
+      ALTER TABLE routes ADD COLUMN media_filter TEXT NOT NULL DEFAULT 'all'
+        CHECK (media_filter IN ('all', 'photo'));
+
+      ALTER TABLE internal_graphql_observation_posts ADD COLUMN media_types_json TEXT;
     `);
   },
 ];

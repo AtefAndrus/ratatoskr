@@ -24,6 +24,11 @@ export interface InternalTimelinePost {
   referencedPostIds: string[];
   /** リポストのとき、元投稿の投稿者ハンドル。URL を通常投稿と同じ形にするために使う。 */
   referencedAuthorHandle: string | null;
+  /**
+   * 添付メディアの種別 (photo / video / animated_gif)。
+   * 添付が無ければ空配列で、判定材料が読めなければ null。
+   */
+  mediaTypes: readonly string[] | null;
   rawResult: unknown;
 }
 
@@ -344,8 +349,44 @@ export function classifyTweetResult(raw: unknown): InternalTimelinePost | null {
     referencedAuthorHandle: types.includes("repost")
       ? readNestedAuthorHandle(legacy.retweeted_status_result)
       : null,
+    // 引用では quoted_status_result を見ない。引用元の添付は引用者が出したものではないため。
+    mediaTypes: types.includes("repost")
+      ? readNestedMediaTypes(legacy.retweeted_status_result)
+      : readMediaTypes(legacy),
     rawResult: raw,
   };
+}
+
+/**
+ * 添付メディアの種別を読む。
+ * entities.media には 1 枚目しか入らないので extended_entities を見る。
+ * 添付が無い投稿には extended_entities 自体が無いので、欠落は空配列とする。
+ * 一方、構造があるのに読めない場合は null を返す。添付が無いと確定したわけではないため。
+ */
+function readMediaTypes(legacy: Record<string, unknown>): string[] | null {
+  if (legacy.extended_entities === undefined) return [];
+  if (!isObject(legacy.extended_entities)) return null;
+  const media = legacy.extended_entities.media;
+  if (media === undefined) return [];
+  if (!Array.isArray(media)) return null;
+  const types: string[] = [];
+  for (const entry of media) {
+    if (!isObject(entry) || typeof entry.type !== "string") return null;
+    types.push(entry.type);
+  }
+  return types;
+}
+
+/**
+ * リポストの元投稿から添付メディアの種別を読む。
+ * リポストは中身が元投稿そのものなので、リポスト自身の legacy には添付が入らない。
+ * 元投稿を展開できなければ null を返す。添付が無いと確定したわけではないため。
+ */
+function readNestedMediaTypes(value: unknown): string[] | null {
+  if (!isObject(value)) return null;
+  const result = unwrapTweetResult(value.result);
+  if (!isObject(result) || !isObject(result.legacy)) return null;
+  return readMediaTypes(result.legacy);
 }
 
 function readTimelineInstructions(payload: unknown): unknown[] | null {
