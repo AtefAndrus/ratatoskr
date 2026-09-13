@@ -90,8 +90,8 @@ sync_local() {
   local commit="$1" base="$2" local_tag local_main
   local lg=(git -C "$repo_root" --no-replace-objects -c core.hooksPath=/dev/null -c core.fsmonitor=false)
   g update-ref refs/release/commit "$commit"
-  # 作業ツリーの 2 ファイルはリリースコミットと同じ内容なので、捨ててから pull すれば揃う
-  local recovery="git checkout -- package.json CHANGELOG.md && git pull --ff-only && git fetch --tags"
+  # mixed reset は作業ツリーに触れないので、準備したファイルや再実行までに加えた編集を失わない
+  local recovery="main 上で git fetch --tags origin main && git reset refs/remotes/origin/main (作業ツリーは変わらず、stage だけが解除される)"
   if ! "${lg[@]}" fetch --quiet --no-tags "$work" refs/release/commit; then
     echo "release-publish: ローカルへの反映に失敗した。$recovery で揃える。" >&2
     return 0
@@ -107,41 +107,69 @@ sync_local() {
 
   local_main=$("${lg[@]}" rev-parse --quiet --verify refs/heads/main || true)
   if [ "$local_main" != "$commit" ]; then
+    if [ -n "$local_main" ] && [ "$local_main" != "$base" ] &&
+      "${lg[@]}" merge-base --is-ancestor "$commit" "$local_main" 2>/dev/null; then
+      return 0
+    fi
     if [ "$("${lg[@]}" symbolic-ref --quiet HEAD || true)" != refs/heads/main ] ||
       ! "${lg[@]}" update-ref -m "release $tag" refs/heads/main "$commit" "$base"; then
       echo "release-publish: ローカルの main を $commit へ進められなかった。$recovery で揃える。" >&2
       return 0
     fi
   fi
-  # 作業ツリーは既にリリースコミットの内容なので、2 ファイルの index だけを揃える。main が進んだ後の再実行でも揃え直す。
-  if [ "$("${lg[@]}" symbolic-ref --quiet HEAD || true)" = refs/heads/main ] &&
-    ! "${lg[@]}" reset --quiet -- package.json CHANGELOG.md; then
-    echo "release-publish: index を揃えられなかった。git reset -- package.json CHANGELOG.md で揃える。" >&2
-  fi
+  [ "$("${lg[@]}" symbolic-ref --quiet HEAD || true)" = refs/heads/main ] || return 0
+
+  # main を進めても index は旧版のままなので揃える。ただし index が旧版の blob を指すファイルに限り、
+  # 再実行までに stage された編集は残す。
+  local file index_blob
+  for file in package.json CHANGELOG.md; do
+    index_blob=$("${lg[@]}" ls-files --stage -- "$file" | awk '{ print $2 }')
+    [ "$index_blob" = "$(g rev-parse "$base:$file")" ] || continue
+    [ "$index_blob" != "$(g rev-parse "$commit:$file")" ] || continue
+    "${lg[@]}" reset --quiet -- "$file" ||
+      echo "release-publish: $file の index を揃えられなかった。git reset -- $file で揃える (作業ツリーは変わらない)。" >&2
+  done
 }
 
-release_url() {
-  gh release view "$tag" -R "$repo" --json url --jq .url 2>/dev/null
+# 公開済みの Release があれば URL を出して 0、無ければ 1、下書きなら 2 を返す。
+# gh release view は下書きも返すが、デプロイは公開時にしか走らないので区別する。
+published_release_url() {
+  local state
+  state=$(gh release view "$tag" -R "$repo" --json isDraft,url --jq '"\(.isDraft)\t\(.url)"' 2>/dev/null) || return 1
+  [ "${state%%$'\t'*}" = false ] || return 2
+  printf '%s\n' "${state#*$'\t'}"
 }
+
+readonly draft_message="GitHub Release $tag が下書きのまま存在する。内容を確認し、公開するか削除してから同じコマンドを再実行する"
 
 create_release() {
-  local url
+  local url status=0
   # 作成は通ったが応答を受け取れなかった場合の再実行では、既にある Release をそのまま使う
-  if url=$(release_url); then
-    echo "GitHub Release $tag は既にある。"
-    echo "$url"
-    return 0
-  fi
+  url=$(published_release_url) || status=$?
+  case "$status" in
+    0)
+      echo "GitHub Release $tag は既に公開されている。"
+      echo "$url"
+      return 0
+      ;;
+    2) fail "$draft_message" ;;
+  esac
   local args=(release create "$tag" -R "$repo" --title "$tag" --generate-notes --verify-tag)
   if [ -n "$notes_file" ]; then
     args+=(--notes-file "$notes_file")
   fi
-  if ! gh "${args[@]}"; then
-    url=$(release_url) || fail "GitHub Release の作成に失敗した。原因を解消して同じコマンドを再実行する"
-    echo "gh は失敗を返したが GitHub Release $tag は作成されている。"
-  else
-    url=$(release_url) || fail "作成した GitHub Release $tag を読めない。gh release view $tag で確認する"
-  fi
+  local created=0
+  gh "${args[@]}" || created=$?
+  status=0
+  url=$(published_release_url) || status=$?
+  case "$status" in
+    0) [ "$created" = 0 ] || echo "gh は失敗を返したが GitHub Release $tag は公開されている。" ;;
+    2) fail "$draft_message" ;;
+    *)
+      [ "$created" = 0 ] || fail "GitHub Release の作成に失敗した。原因を解消して同じコマンドを再実行する"
+      fail "作成した GitHub Release $tag を読めない。gh release view $tag -R $repo で確認する"
+      ;;
+  esac
   echo "$url"
 }
 
