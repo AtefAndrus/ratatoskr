@@ -18,7 +18,8 @@
     "format:check": "oxfmt --check",
     "format:md": "markdownlint-cli2 --fix \"docs/**/*.md\" \"*.md\"",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run lint:md",
-    "changelog": "git-cliff --output CHANGELOG.md",
+    "changelog": "mise exec -- git-cliff --output CHANGELOG.md",
+    "release:prepare": "bash scripts/release-prepare.sh",
     "prepare": "lefthook install"
   },
   "dependencies": {
