@@ -29,7 +29,7 @@ bun pm pkg set "version=$version" >/dev/null
 # シェルの PATH に別の版の git-cliff が残っていても mise.toml で固定した版を使う
 mise exec -- git-cliff --tag "$tag" --output CHANGELOG.md
 
-first_heading=$(grep -m1 '^## \[' CHANGELOG.md)
+first_heading=$(grep -m1 '^## ' CHANGELOG.md || true)
 [[ "$first_heading" == "## [$version] - "* ]] || fail "CHANGELOG の先頭見出しが想定と違う: $first_heading"
 
 echo

@@ -107,10 +107,14 @@ sync_local() {
 
   # main を進めても index は旧版のままなので揃える。ただし index が旧版の blob を指すファイルに限り、
   # 再実行までに stage された編集は残す。
-  local file
+  local file entry
   for file in package.json CHANGELOG.md; do
+    if ! entry=$("${lg[@]}" ls-files --stage -- "$file"); then
+      echo "release-publish: $file の index を読めなかった。git status で確認する。" >&2
+      continue
+    fi
     # blob だけでなくモードと stage 番号も比べ、実行権限の変更や競合中のエントリを残す
-    [ "$("${lg[@]}" ls-files --stage -- "$file")" = "100644 $(g rev-parse "$base:$file") 0	$file" ] || continue
+    [ "$entry" = "100644 $(g rev-parse "$base:$file") 0	$file" ] || continue
     "${lg[@]}" reset --quiet -- "$file" ||
       echo "release-publish: $file の index を揃えられなかった。git reset -- $file で揃える (作業ツリーは変わらない)。" >&2
   done
@@ -186,7 +190,7 @@ g cat-file blob "$base:package.json" |
   cmp -s - <(g cat-file blob "$pkg_blob") ||
   fail "package.json の変更が version を $version にするだけではない"
 
-first_heading=$(g cat-file blob "$changelog_blob" | grep -m1 '^## \[' || true)
+first_heading=$(g cat-file blob "$changelog_blob" | grep -m1 '^## ' || true)
 [[ "$first_heading" == "## [$version] - "* ]] || fail "CHANGELOG.md の先頭見出しが $version でない: $first_heading"
 
 export GIT_INDEX_FILE="$work/release-index"
