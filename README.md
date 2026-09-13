@@ -122,7 +122,7 @@ VS Code の `oxc.oxc-vscode` 拡張はバイナリを同梱せず、`node_module
 コミット前に lefthook が `bun run check` と同じ検査を走らせる。
 main への直接コミットは lefthook が止める。
 
-リリースは `package.json` の version を上げ、`mise exec -- git-cliff --tag v<version> --output CHANGELOG.md` で CHANGELOG を生成してマージし、タグと GitHub Release を公開する。
+リリースは `/release <version>` skill で行う。手順は [.agents/skills/release/SKILL.md](.agents/skills/release/SKILL.md) にある。
 Release の公開で Coolify へデプロイされる。
 
 ## ライセンス
