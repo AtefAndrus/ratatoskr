@@ -48,26 +48,24 @@ bun run release:publish <version>
 bun run release:publish <version> <notes-file>
 ```
 
-スクリプトは次を確かめる。
+スクリプトは作業中のリポジトリで commit や push をしない。
+作業ツリーからは `package.json` と CHANGELOG.md のバイト列だけを読み、GIT_* 環境変数を外した一時 bare リポジトリで次を行う。
 
-- origin の fetch 先と push 先がどちらも `https://github.com/AtefAndrus/ratatoskr.git` だけである
-- main 上にいて、HEAD が origin の main と一致する
-- 変更のあるファイルが `package.json` と CHANGELOG.md だけで、`package.json` は version を `<version>` にする変更だけである
-- CHANGELOG.md の先頭見出しが `<version>` である
-
-確認が通ると、2 ファイルの内容から blob、tree、commit を git の plumbing で組み立てる。
-組み立てた tree が origin の main から 2 ファイルの内容変更だけであることを検証し、その commit を main とタグ `v<version>` として `--atomic --no-follow-tags --no-verify` で push する。
-git の hook は実行しない。
-push の終了コードではなく push 後の origin の ref を読み直して成否を決め、成功したときだけローカルの main とタグを更新してから `gh release create --generate-notes --verify-tag` を実行する。
+1. `https://github.com/AtefAndrus/ratatoskr.git` の main を取得し、作業中のリポジトリの HEAD と一致することを確かめる
+2. `package.json` が main の内容から version を `<version>` にしただけであること、CHANGELOG.md の先頭見出しが `<version>` であることを確かめる
+3. 2 ファイルから blob、tree、commit を組み立て、tree が main から 2 ファイルの内容変更だけであることを検証する
+4. その commit を main とタグ `v<version>` として `--atomic --no-follow-tags --no-verify` で push する。main が取得時から動いていたり、タグが既にあったりすれば lease で拒否される
+5. push の終了コードではなく GitHub の ref を読み直して成否を決め、成功したら作業中のリポジトリの main とタグを揃え、`gh release create --generate-notes --verify-tag` を実行する
 
 main の ruleset は必須ステータスチェックを課すが Admin ロールはバイパスでき、push は通る。
 検査は Step 1 の `bun run check` で済んでおり、リリースコミットで変わるのは版の文字列と CHANGELOG だけである。
 
 失敗したときは次のとおりに扱う。
 
-- push が origin に反映されなかった場合、ローカルの ref は変わっていない。表示された原因を解消し、同じコマンドを再実行する。
-- push は済んだが Release の作成に失敗した場合、同じコマンドを再実行する。origin に `v<version>` のタグがあり、そのコミットの `package.json` が `<version>` なら、push を省いて Release の作成だけを行う。
-- origin の状態が想定と違うと表示された場合は、再実行せずにユーザーに報告する。
+- push が反映されなかったと表示された場合、作業中のリポジトリは変わっていない。表示された原因を解消し、同じコマンドを再実行する。
+- push は済んだが Release の作成に失敗した場合、同じコマンドを再実行する。GitHub に `v<version>` のタグがあり、そのコミットの `package.json` が `<version>` なら、push を省いて Release の作成だけを行う。
+- push 後の GitHub が想定と違うと表示された場合は、再実行せずにユーザーに報告する。
+- ローカルへの反映に失敗したという警告だけが出た場合、リリースは完了している。`git pull --ff-only` と `git fetch --tags` で揃える。
 
 ## Step 4: Verify
 
