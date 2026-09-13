@@ -121,11 +121,10 @@ sync_local() {
 
   # main を進めても index は旧版のままなので揃える。ただし index が旧版の blob を指すファイルに限り、
   # 再実行までに stage された編集は残す。
-  local file index_blob
+  local file
   for file in package.json CHANGELOG.md; do
-    index_blob=$("${lg[@]}" ls-files --stage -- "$file" | awk '{ print $2 }')
-    [ "$index_blob" = "$(g rev-parse "$base:$file")" ] || continue
-    [ "$index_blob" != "$(g rev-parse "$commit:$file")" ] || continue
+    # blob だけでなくモードと stage 番号も比べ、実行権限の変更や競合中のエントリを残す
+    [ "$("${lg[@]}" ls-files --stage -- "$file")" = "100644 $(g rev-parse "$base:$file") 0	$file" ] || continue
     "${lg[@]}" reset --quiet -- "$file" ||
       echo "release-publish: $file の index を揃えられなかった。git reset -- $file で揃える (作業ツリーは変わらない)。" >&2
   done
