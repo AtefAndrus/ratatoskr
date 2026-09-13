@@ -20,7 +20,6 @@
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test && bun run lint:md",
     "changelog": "mise exec -- git-cliff --output CHANGELOG.md",
     "release:prepare": "bash scripts/release-prepare.sh",
-    "release:publish": "bash scripts/release-publish.sh",
     "prepare": "lefthook install"
   },
   "dependencies": {

@@ -38,4 +38,4 @@ git --no-pager diff --stat "$prev" HEAD -- src/db/schema.ts src/config/ Dockerfi
 echo
 echo "== 次の手順"
 echo "git diff で package.json と CHANGELOG.md を確認し、必要ならノートの節を書いてから次を実行する。"
-echo "bun run release:publish $version [notes-file]"
+echo "/bin/bash $(pwd -P)/scripts/release-publish.sh $version [notes-file]"

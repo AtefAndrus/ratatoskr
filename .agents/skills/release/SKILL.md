@@ -9,7 +9,8 @@ ratatoskr の v<version> をリリースする。
 GitHub Release の公開を契機に `.github/workflows/deploy.yml` が Coolify へデプロイする。
 
 コミット、push、Release 作成は `scripts/release-publish.sh` だけが行う。
-`.claude/settings.json` はこのスクリプトの起動だけを許可しており、`git push` そのものは許可していない。
+`.claude/settings.local.json` の許可ルールは `/bin/bash <リポジトリの絶対パス>/scripts/release-publish.sh` の起動だけを許可しており、`git push` そのものは許可していない。
+ルールに一致させるため、スクリプトは必ずこの形 (`/bin/bash` とリポジトリの絶対パス) で起動する。
 スクリプトが失敗したときに、同じ操作を `git commit` や `git push` の直接実行で代替しない。失敗の内容をユーザーに報告して止まる。
 
 ## Step 1: Prepare
@@ -43,9 +44,9 @@ Renovate による Dockerfile の bun 更新のように、運用者の作業が
 
 ```bash
 # 節が無い場合
-bun run release:publish <version>
+/bin/bash <リポジトリの絶対パス>/scripts/release-publish.sh <version>
 # 節がある場合
-bun run release:publish <version> <notes-file>
+/bin/bash <リポジトリの絶対パス>/scripts/release-publish.sh <version> <notes-file>
 ```
 
 スクリプトは作業中のリポジトリで commit や push をしない。
@@ -65,7 +66,8 @@ main の ruleset は必須ステータスチェックを課すが Admin ロー�
 - push が反映されなかったと表示された場合、作業中のリポジトリは変わっていない。表示された原因を解消し、同じコマンドを再実行する。
 - push は済んだが Release の作成に失敗した場合、同じコマンドを再実行する。GitHub に `v<version>` のタグがあり、そのコミットの `package.json` が `<version>` なら、push を省いて Release の作成だけを行う。
 - push 後の GitHub が想定と違うと表示された場合は、再実行せずにユーザーに報告する。
-- ローカルへの反映に失敗したという警告だけが出た場合、リリースは完了している。`git pull --ff-only` と `git fetch --tags` で揃える。
+- ローカルへの反映や index の同期に失敗したという警告だけが出た場合、リリースは完了している。警告に表示されたコマンドで揃える。作業ツリーの `package.json` と CHANGELOG.md はリリースコミットと同じ内容なので、`git checkout` で捨ててから pull してよい。
+- push は済んだが GitHub Release の作成で gh が失敗を返した場合も、同じコマンドを再実行する。Release が既に作られていれば、作り直さずにその URL を表示する。
 
 ## Step 4: Verify
 

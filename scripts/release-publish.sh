@@ -11,7 +11,43 @@
 # 作業ツリーからは 2 ファイルのバイト列だけを読み、GIT_* 環境変数を外した一時 bare リポジトリで
 # GitHub の main を取得し、blob、tree、commit を組み立てて検証し、その object ID だけを push する。
 # ~/.gitconfig は認証ヘルパーのために読む。利用者自身の設定であり、リポジトリの状態とは別に信頼する。
+#
+# 権限ルールは bun run ではなく /bin/bash とこのファイルの絶対パスで許可する。
+# bun run は package.json の scripts から実行内容を決め、PATH の先頭に node_modules/.bin を足すので、
+# どちらもリポジトリ内のファイルで差し替えられるため。
 set -euo pipefail
+
+# 外部コマンドを呼ぶ前に、リポジトリ内から持ち込める実行ファイルを外す。
+# PATH のうち相対パス、このリポジトリ配下 (node_modules/.bin など)、mise の管理ディレクトリ
+# (リポジトリの mise.toml が tools や env._.path で足せる) を除き、環境から取り込んだ関数も消す。
+# ここより上では bash の組み込みコマンドだけを使う。
+while read -r _ _ fn; do
+  unset -f "$fn"
+done < <(declare -F)
+script_dir="${BASH_SOURCE[0]%/*}"
+[ "$script_dir" != "${BASH_SOURCE[0]}" ] || script_dir=.
+repo_root=$(cd "$script_dir/.." && pwd -P)
+repo_root_logical=$(cd "$script_dir/.." && pwd -L)
+mise_data="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+trusted_path=
+IFS=: read -r -a path_entries <<<"$PATH"
+for entry in "${path_entries[@]}"; do
+  case "$entry" in
+    /*) ;;
+    *) continue ;;
+  esac
+  case "$entry/" in
+    "$repo_root"/* | "$repo_root_logical"/* | "$mise_data"/*) continue ;;
+  esac
+  trusted_path="${trusted_path:+$trusted_path:}$entry"
+done
+export PATH="$trusted_path"
+hash -r
+for name in $(compgen -e); do
+  case "$name" in
+    GIT_*) unset "$name" ;;
+  esac
+done
 
 readonly repo="AtefAndrus/ratatoskr"
 readonly repo_url="https://github.com/$repo.git"
@@ -23,7 +59,7 @@ fail() {
 
 version="${1:-}"
 notes_file="${2:-}"
-usage="usage: bun run release:publish <major.minor.patch> [notes-file]"
+usage="usage: /bin/bash $repo_root/scripts/release-publish.sh <major.minor.patch> [notes-file]"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "$usage"
 [ $# -le 2 ] || fail "$usage"
 readonly tag="v$version"
@@ -32,12 +68,6 @@ if [ -n "$notes_file" ]; then
   [ -f "$notes_file" ] && [ -s "$notes_file" ] || fail "ノートのファイルが無いか空である: $notes_file"
   notes_file=$(realpath "$notes_file")
 fi
-
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-
-while IFS= read -r name; do
-  unset "$name"
-done < <(compgen -e | grep '^GIT_' || true)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -60,8 +90,10 @@ sync_local() {
   local commit="$1" base="$2" local_tag local_main
   local lg=(git -C "$repo_root" --no-replace-objects -c core.hooksPath=/dev/null -c core.fsmonitor=false)
   g update-ref refs/release/commit "$commit"
+  # 作業ツリーの 2 ファイルはリリースコミットと同じ内容なので、捨ててから pull すれば揃う
+  local recovery="git checkout -- package.json CHANGELOG.md && git pull --ff-only && git fetch --tags"
   if ! "${lg[@]}" fetch --quiet --no-tags "$work" refs/release/commit; then
-    echo "release-publish: ローカルへの反映に失敗した。git pull --ff-only と git fetch --tags で揃える。" >&2
+    echo "release-publish: ローカルへの反映に失敗した。$recovery で揃える。" >&2
     return 0
   fi
 
@@ -74,25 +106,43 @@ sync_local() {
   fi
 
   local_main=$("${lg[@]}" rev-parse --quiet --verify refs/heads/main || true)
-  if [ "$local_main" = "$commit" ]; then
-    return 0
+  if [ "$local_main" != "$commit" ]; then
+    if [ "$("${lg[@]}" symbolic-ref --quiet HEAD || true)" != refs/heads/main ] ||
+      ! "${lg[@]}" update-ref -m "release $tag" refs/heads/main "$commit" "$base"; then
+      echo "release-publish: ローカルの main を $commit へ進められなかった。$recovery で揃える。" >&2
+      return 0
+    fi
   fi
+  # 作業ツリーは既にリリースコミットの内容なので、2 ファイルの index だけを揃える。main が進んだ後の再実行でも揃え直す。
   if [ "$("${lg[@]}" symbolic-ref --quiet HEAD || true)" = refs/heads/main ] &&
-    "${lg[@]}" update-ref -m "release $tag" refs/heads/main "$commit" "$base"; then
-    # 作業ツリーは既にリリースコミットの内容なので、index だけを揃える
-    "${lg[@]}" reset --quiet || true
-  else
-    echo "release-publish: ローカルの main を $commit へ進められなかった。git pull --ff-only で揃える。" >&2
+    ! "${lg[@]}" reset --quiet -- package.json CHANGELOG.md; then
+    echo "release-publish: index を揃えられなかった。git reset -- package.json CHANGELOG.md で揃える。" >&2
   fi
 }
 
+release_url() {
+  gh release view "$tag" -R "$repo" --json url --jq .url 2>/dev/null
+}
+
 create_release() {
+  local url
+  # 作成は通ったが応答を受け取れなかった場合の再実行では、既にある Release をそのまま使う
+  if url=$(release_url); then
+    echo "GitHub Release $tag は既にある。"
+    echo "$url"
+    return 0
+  fi
   local args=(release create "$tag" -R "$repo" --title "$tag" --generate-notes --verify-tag)
   if [ -n "$notes_file" ]; then
     args+=(--notes-file "$notes_file")
   fi
-  gh "${args[@]}"
-  gh release view "$tag" -R "$repo" --json url --jq .url
+  if ! gh "${args[@]}"; then
+    url=$(release_url) || fail "GitHub Release の作成に失敗した。原因を解消して同じコマンドを再実行する"
+    echo "gh は失敗を返したが GitHub Release $tag は作成されている。"
+  else
+    url=$(release_url) || fail "作成した GitHub Release $tag を読めない。gh release view $tag で確認する"
+  fi
+  echo "$url"
 }
 
 # タグが既に GitHub にあるなら push は終わっている。Release 作成だけが残った状態からの再実行として扱い、push はしない。
