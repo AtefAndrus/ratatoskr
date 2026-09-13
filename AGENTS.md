@@ -55,7 +55,7 @@ bun test             # bun:test
 - コミットメッセージは `[type] short description` (type: feat, fix, docs, refactor, test, chore)。
 - PR タイトルと本文は日本語で書く。PR タイトルにもコミットメッセージと同じ `[type]` を付ける。squash マージでは PR タイトルがコミット件名になり、接頭辞が無いと CHANGELOG の分類が「Changed」の受け皿に落ちる。
 - Release: `/release <version>` skill (`.agents/skills/release/SKILL.md`) で行う。GitHub Release の公開で Coolify へデプロイされる。リリースノートは GitHub の自動生成に任せ、マイグレーション、環境変数、Coolify 側の手作業があるときだけ移行とデプロイ後の確認の節を前に付ける。
-- main への直接 push はリリースコミットだけで、`scripts/release-publish.sh` が行う。`.claude/settings.json` はこのスクリプトの起動 (`bun run release:publish`) だけを許可する。`git push` 自体の許可ルールを足さない。スクリプトの検証 (変更が version と CHANGELOG だけ、HEAD が origin/main と一致) を緩めると、この許可が任意の内容を main へ push する経路になる。
+- main への直接 push はリリースコミットだけで、`scripts/release-publish.sh` が行う。`.claude/settings.json` はこのスクリプトの起動 (`bun run release:publish`) だけを許可する。`git push` 自体の許可ルールを足さない。スクリプトは作業ツリーを検査して `git commit` するのではなく、commit を plumbing で組み立てて検証した object ID だけを push する。clean filter、hook、ファイルモード、`origin/main` という名前のローカルブランチ、pushurl で、検査した内容と push される内容をずらせるためである。この検証を緩めると、許可が任意の内容を main へ push する経路になる。
 
 ## Gotchas
 

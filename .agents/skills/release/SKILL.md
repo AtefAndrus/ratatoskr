@@ -48,15 +48,26 @@ bun run release:publish <version>
 bun run release:publish <version> <notes-file>
 ```
 
-スクリプトは次を検証してから、`LEFTHOOK=0` で main にリリースコミットを作り、タグを付け、main とタグを `--atomic` で push し、`gh release create --generate-notes --verify-tag` を実行する。
+スクリプトは次を確かめる。
 
-- main 上にいて、HEAD が origin/main と一致する
-- 変更が `package.json` と CHANGELOG.md だけで、`package.json` は version を `<version>` にする変更だけである
+- origin の fetch 先と push 先がどちらも `https://github.com/AtefAndrus/ratatoskr.git` だけである
+- main 上にいて、HEAD が origin の main と一致する
+- 変更のあるファイルが `package.json` と CHANGELOG.md だけで、`package.json` は version を `<version>` にする変更だけである
 - CHANGELOG.md の先頭見出しが `<version>` である
-- タグ `v<version>` がローカルにも origin にも無い
+
+確認が通ると、2 ファイルの内容から blob、tree、commit を git の plumbing で組み立てる。
+組み立てた tree が origin の main から 2 ファイルの内容変更だけであることを検証し、その commit を main とタグ `v<version>` として `--atomic --no-follow-tags --no-verify` で push する。
+git の hook は実行しない。
+push の終了コードではなく push 後の origin の ref を読み直して成否を決め、成功したときだけローカルの main とタグを更新してから `gh release create --generate-notes --verify-tag` を実行する。
 
 main の ruleset は必須ステータスチェックを課すが Admin ロールはバイパスでき、push は通る。
-検査は Step 1 の `bun run check` で済んでおり、リリースコミットで変わるのは版の文字列だけである。
+検査は Step 1 の `bun run check` で済んでおり、リリースコミットで変わるのは版の文字列と CHANGELOG だけである。
+
+失敗したときは次のとおりに扱う。
+
+- push が origin に反映されなかった場合、ローカルの ref は変わっていない。表示された原因を解消し、同じコマンドを再実行する。
+- push は済んだが Release の作成に失敗した場合、同じコマンドを再実行する。origin に `v<version>` のタグがあり、そのコミットの `package.json` が `<version>` なら、push を省いて Release の作成だけを行う。
+- origin の状態が想定と違うと表示された場合は、再実行せずにユーザーに報告する。
 
 ## Step 4: Verify
 

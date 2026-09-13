@@ -16,10 +16,12 @@ cd "$(git rev-parse --show-toplevel)"
 [ "$(git symbolic-ref --quiet --short HEAD || true)" = main ] || fail "main 上で実行する"
 [ -z "$(git status --porcelain)" ] || fail "作業ツリーがクリーンでない"
 git fetch --quiet --tags origin main
-[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || fail "main が origin/main と一致しない"
+[ "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)" ] || fail "main が origin/main と一致しない"
 if git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null; then
   fail "タグ $tag が既にある"
 fi
+# ファイルを書き換える前に比較の基準を決め、ここで失敗しても作業ツリーを汚さない
+prev=$(git describe --tags --abbrev=0) || fail "HEAD から辿れるリリースタグが無い (shallow clone なら git fetch --unshallow する)"
 
 bun run check
 
@@ -30,7 +32,6 @@ mise exec -- git-cliff --tag "$tag" --output CHANGELOG.md
 first_heading=$(grep -m1 '^## \[' CHANGELOG.md)
 [[ "$first_heading" == "## [$version] - "* ]] || fail "CHANGELOG の先頭見出しが想定と違う: $first_heading"
 
-prev=$(git describe --tags --abbrev=0)
 echo
 echo "== $prev 以降で移行とデプロイ後の確認に関わる差分"
 git --no-pager diff --stat "$prev" HEAD -- src/db/schema.ts src/config/ Dockerfile docs/deployment.md
