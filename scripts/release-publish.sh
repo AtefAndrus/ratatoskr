@@ -17,32 +17,18 @@
 # どちらもリポジトリ内のファイルで差し替えられるため。
 set -euo pipefail
 
-# 外部コマンドを呼ぶ前に、リポジトリ内から持ち込める実行ファイルを外す。
-# PATH のうち相対パス、このリポジトリ配下 (node_modules/.bin など)、mise の管理ディレクトリ
-# (リポジトリの mise.toml が tools や env._.path で足せる) を除き、環境から取り込んだ関数も消す。
+# 外部コマンドを呼ぶ前に、PATH をシステムのディレクトリだけに固定し、環境から取り込んだ関数を消す。
+# 起動元の PATH から危ないエントリを除く形にしないのは、node_modules/.bin のほか、リポジトリの mise.toml が
+# tools や env._.path でリポジトリ外の任意の絶対パスも足せ、由来をエントリの文字列から判別できないため。
 # ここより上では bash の組み込みコマンドだけを使う。
 while read -r _ _ fn; do
   unset -f "$fn"
 done < <(declare -F)
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+hash -r
 script_dir="${BASH_SOURCE[0]%/*}"
 [ "$script_dir" != "${BASH_SOURCE[0]}" ] || script_dir=.
 repo_root=$(cd "$script_dir/.." && pwd -P)
-repo_root_logical=$(cd "$script_dir/.." && pwd -L)
-mise_data="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
-trusted_path=
-IFS=: read -r -a path_entries <<<"$PATH"
-for entry in "${path_entries[@]}"; do
-  case "$entry" in
-    /*) ;;
-    *) continue ;;
-  esac
-  case "$entry/" in
-    "$repo_root"/* | "$repo_root_logical"/* | "$mise_data"/*) continue ;;
-  esac
-  trusted_path="${trusted_path:+$trusted_path:}$entry"
-done
-export PATH="$trusted_path"
-hash -r
 for name in $(compgen -e); do
   case "$name" in
     GIT_*) unset "$name" ;;
