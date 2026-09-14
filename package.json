@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "discord.js": "14.27.0",
-    "zod": "4.5.4"
+    "zod": "4.6.2"
   },
   "devDependencies": {
     "bun-types": "1.4.0",
