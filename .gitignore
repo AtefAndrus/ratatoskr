@@ -7,3 +7,4 @@ tmp
 data
 *.log
 coverage
+.claude/settings.local.json
