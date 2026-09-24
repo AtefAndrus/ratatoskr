@@ -1,6 +1,6 @@
 [tools]
 bun = "1.4.2"
-"aqua:orhun/git-cliff" = "2.14.1"
+"aqua:orhun/git-cliff" = "2.14.2"
 
 [settings]
 env_file = ".env"
