@@ -7,14 +7,14 @@ import {
   type SendableChannels,
 } from "discord.js";
 
+import type { DiscordPostSender, SentPost } from "../services/deliveryService";
+
 const UNAVAILABLE_CODES: ReadonlySet<number> = new Set([
   RESTJSONErrorCodes.UnknownMessage,
   RESTJSONErrorCodes.UnknownChannel,
   RESTJSONErrorCodes.MissingAccess,
   RESTJSONErrorCodes.MissingPermissions,
 ]);
-
-import type { DiscordPostSender, SentPost } from "../services/deliveryService";
 
 export type MessageCheck =
   | { status: "found"; hasEmbeds: boolean; suppressed: boolean }

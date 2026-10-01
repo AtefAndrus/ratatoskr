@@ -23,6 +23,8 @@ Discord Developer Portal でアプリケーションを作り、次のとおり�
 上の 5 つの権限を合計した permissions 整数は `274877991936` である。
 Embed Links が無いと、送った投稿 URL のプレビューが展開されない。
 Read Message History は、送信後の埋め込みを確認して表示されなかった場合に修復するために要る。
+Default Install Settings はこれから招待するサーバーにだけ効くので、導入済みのサーバーでは Bot のロールに Read Message History を付けるか、Install Link で招待し直す。
+付いていないチャンネルでは修復を行わない。
 Send Messages in Threads は、`/watch add` でスレッドを投稿先に選べるようにするために要る。
 
 サーバーへの招待は Installation ページの Install Link を使う。

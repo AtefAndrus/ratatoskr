@@ -294,7 +294,6 @@ describe("EmbedRepairService", () => {
   test("空が続けば 30 秒、90 秒、240 秒で付け外しし、600 秒は確認だけで終える", async () => {
     const h = harness([]);
     h.schedule();
-    const toggledAt: number[] = [];
     for (const at of [30_000, 90_000, 240_000]) {
       h.clock.advance(at - 1 - h.clock.time);
       await settle();
@@ -305,12 +304,10 @@ describe("EmbedRepairService", () => {
       h.clock.advance(1_000);
       await settle();
       expect(h.calls.at(-1)).toBe("unsuppress:m");
-      toggledAt.push(at);
     }
     h.clock.advance(600_000 - h.clock.time);
     await settle();
     expect(h.calls.at(-1)).toBe("check:m");
-    expect(toggledAt).toEqual([30_000, 90_000, 240_000]);
     expect(metrics.snapshot().counters["embed_repair.toggle_attempts"]).toBe(3);
     expect(metrics.snapshot().counters["embed_repair.empty_final"]).toBe(1);
     h.clock.advance(600_000);
