@@ -22,6 +22,7 @@ import { createAdminRouter } from "./http/adminEndpoints";
 import { startHttpServer } from "./http/server";
 import { runRetentionLoop } from "./maintenance/retention";
 import { DeliveryService } from "./services/deliveryService";
+import { EmbedRepairService } from "./services/embedRepairService";
 import { ReceiverSupervisor } from "./services/receiverSupervisor";
 import { WatchService } from "./services/watchService";
 import { logger } from "./utils/logger";
@@ -52,12 +53,9 @@ async function bootstrap(): Promise<void> {
 
   const client = createBotClient();
   metrics.attach({ client });
-  const delivery = new DeliveryService(
-    routes,
-    deliveries,
-    new DiscordChannelPostSender(client),
-    guildSettings,
-  );
+  const postSender = new DiscordChannelPostSender(client);
+  const embedRepair = new EmbedRepairService(postSender);
+  const delivery = new DeliveryService(routes, deliveries, postSender, guildSettings, embedRepair);
   const supervisor = new ReceiverSupervisor({
     receivers,
     targets,
@@ -106,16 +104,18 @@ async function bootstrap(): Promise<void> {
   });
 
   const abortController = new AbortController();
-  const background = Promise.all([
+  const backgroundTasks = [
     supervisor.run(abortController.signal),
     delivery.run(abortController.signal),
+    embedRepair.run(abortController.signal),
     runRetentionLoop({
       maintenance,
       rawRetentionDays: config.rawRetentionDays,
       retentionDays: config.retentionDays,
       signal: abortController.signal,
     }),
-  ]);
+  ];
+  const background = Promise.all(backgroundTasks);
 
   let shuttingDown = false;
   const shutdown = (reason: string): void => {
@@ -123,15 +123,18 @@ async function bootstrap(): Promise<void> {
     shuttingDown = true;
     logger.info("Shutting down", { reason });
     abortController.abort();
-    void background
-      .catch((error: unknown) => logger.error("Background task failed during shutdown", { error }))
-      .then(async () => {
-        await httpServer.stop();
-        await client.destroy();
-        db.close();
-        logger.info("Shutdown complete");
-        process.exit(0);
-      });
+    void Promise.allSettled(backgroundTasks).then(async (results) => {
+      for (const result of results) {
+        if (result.status === "rejected") {
+          logger.error("Background task failed during shutdown", { error: result.reason });
+        }
+      }
+      await httpServer.stop();
+      await client.destroy();
+      db.close();
+      logger.info("Shutdown complete");
+      process.exit(0);
+    });
   };
   process.on("SIGINT", () => {
     shutdown("SIGINT");

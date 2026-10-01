@@ -11,7 +11,7 @@ import { NotificationRepository } from "../../src/db/repositories/notifications"
 import { ReceiverRepository } from "../../src/db/repositories/receivers";
 import { RouteRepository } from "../../src/db/repositories/routes";
 import { TargetRepository } from "../../src/db/repositories/targets";
-import type { DiscordPostSender } from "../../src/services/deliveryService";
+import type { DiscordPostSender, SentPost } from "../../src/services/deliveryService";
 
 export interface TestContext {
   db: Database;
@@ -48,9 +48,9 @@ export function createRecordingSender(): DiscordPostSender & { sent: string[] } 
   const sent: string[] = [];
   return {
     sent,
-    async sendPostUrl(channelId: string, postUrl: string): Promise<{ messageId: string }> {
+    async sendPostUrl(channelId: string, postUrl: string): Promise<SentPost> {
       sent.push(`${channelId}:${postUrl}`);
-      return { messageId: `message-${sent.length}` };
+      return { messageId: `message-${sent.length}`, embedLinks: null };
     },
   };
 }

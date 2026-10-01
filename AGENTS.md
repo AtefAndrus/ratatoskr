@@ -32,6 +32,8 @@ bun test             # bun:test
 
 - Discord への送信は `delivery_claims` の `(route_id, dedupe_key)` 一意制約で重複排除する。Web Push と内部 GraphQL が同じ投稿を検出しても 1 回しか送らない根拠はこの表だけなので、保持期間で消さない。
 - Web Push と内部 GraphQL は投稿先単位の `delivery_queue` へ保存してから Discord へ送る。送信失敗と起動時に回収した `sending` は再試行し、Discord 受理後から DB 更新までの停止窓では欠落を避けて再送する。
+- FxEmbed 系 (`fixupx.com` / `fixvx.com`) の URL は、送信後に埋め込みが空ならメッセージの `SUPPRESS_EMBEDS` を付け外しして Discord に再取得させる。修復は配信済み状態と重複排除の記録を変えない。
+- 埋め込み修復の予定はプロセス内だけに保持する。強制終了時に抑止フラグが残る危険を受け入れ、通常の停止では付け外し中の解除 PATCH を完了させる。
 - 投稿先の `routes.created_at` より前の投稿はその投稿先へ送らない。既存 DB の補完は、投稿先作成後に成功した最初の観測時刻より前へ広げない。
 - 受信用 X アカウントは全員がすべての監視対象をフォローする冗長構成。`/watch add` は最初に成功した 1 アカウントで X 側を設定し、残りは `ReceiverSupervisor` の 10 分周期の照合で揃える。
 - フォローは全員でも、内部 GraphQL のポーリングは分担する。全員が全対象を引くと配信は `delivery_claims` で 1 回に落ちるのに X への要求だけが台数倍になるため。`pollAssignment.ts` が対象 ID を起点に 2 台へ割り当てる。1 台が落ちても対象が無人にならない冗長度で、受信 2 台以下では全員が全対象を持つ。

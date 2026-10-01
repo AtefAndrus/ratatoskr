@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { DeliveryService, xSnowflakeTimestampMs } from "../src/services/deliveryService";
+import { metrics } from "../src/utils/metrics";
 import { addTarget, createRecordingSender, createTestContext } from "./helpers/database";
 
 describe("DeliveryService", () => {
@@ -47,9 +48,9 @@ describe("DeliveryService", () => {
       context.routes.add({ targetId: target, guildId: "g", channelId: "c1" });
       let shouldFail = true;
       const sender = {
-        async sendPostUrl(): Promise<{ messageId: string }> {
+        async sendPostUrl(): Promise<{ messageId: string; embedLinks: null }> {
           if (shouldFail) throw new Error("Discord down");
-          return { messageId: "m" };
+          return { messageId: "m", embedLinks: null };
         },
       };
       const service = new DeliveryService(context.routes, context.deliveries, sender);
@@ -113,5 +114,94 @@ describe("DeliveryService", () => {
       new Date("2026-09-04T01:25:00.232Z").getTime(),
     );
     expect(xSnowflakeTimestampMs("abc")).toBeNull();
+  });
+
+  test("FxEmbed 系で Embed Links がある送信だけ修復を予約する", async () => {
+    const context = createTestContext();
+    metrics.reset();
+    try {
+      const targetId = addTarget(context);
+      context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      const scheduled: Array<{ channelId: string; messageId: string; sentAtMs: number }> = [];
+      let embedLinks: boolean | null = true;
+      const service = new DeliveryService(
+        context.routes,
+        context.deliveries,
+        {
+          async sendPostUrl() {
+            return { messageId: "m", embedLinks };
+          },
+        },
+        context.guildSettings,
+        { schedule: (target) => scheduled.push(target) },
+      );
+      const post = (postId: string) => ({
+        source: "webpush" as const,
+        sourceRecordId: Number(postId),
+        targetId,
+        postId,
+        postUrl: `https://x.com/example/status/${postId}`,
+        kinds: ["posts"] as const,
+        mediaTypes: [],
+      });
+      await service.deliver(post("1"));
+      context.guildSettings.setLinkDomain("g", "fixupx.com");
+      const before = Date.now();
+      await service.deliver(post("2"));
+      expect(scheduled).toHaveLength(1);
+      expect(scheduled[0]).toMatchObject({ channelId: "c", messageId: "m" });
+      expect(scheduled[0]!.sentAtMs).toBeGreaterThanOrEqual(before);
+      embedLinks = false;
+      await service.deliver(post("3"));
+      embedLinks = null;
+      context.guildSettings.setLinkDomain("g", "fixvx.com");
+      await service.deliver(post("4"));
+      expect(scheduled).toHaveLength(1);
+      expect(metrics.snapshot().counters["embed_repair.ineligible"]).toBe(2);
+    } finally {
+      context.db.close();
+      metrics.reset();
+    }
+  });
+
+  test("修復の予約が例外を投げても送信済みのままで再送しない", async () => {
+    const context = createTestContext();
+    try {
+      const targetId = addTarget(context);
+      const route = context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      context.guildSettings.setLinkDomain("g", "fixupx.com");
+      let sends = 0;
+      const service = new DeliveryService(
+        context.routes,
+        context.deliveries,
+        {
+          async sendPostUrl() {
+            sends += 1;
+            return { messageId: "m", embedLinks: true };
+          },
+        },
+        context.guildSettings,
+        {
+          schedule() {
+            throw new Error("schedule failed");
+          },
+        },
+      );
+      const result = await service.deliver({
+        source: "webpush",
+        sourceRecordId: 1,
+        targetId,
+        postId: "1",
+        postUrl: "https://x.com/example/status/1",
+        kinds: ["posts"],
+        mediaTypes: [],
+      });
+      await service.drain();
+      expect(result).toEqual({ sent: 1, failed: 0, skipped: 0, filtered: 0 });
+      expect(sends).toBe(1);
+      expect(context.deliveries.queueState(route.route.id, "1")).toBe("sent");
+    } finally {
+      context.db.close();
+    }
   });
 });
