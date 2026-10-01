@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.6.1] - 2026-10-01
+
+
+### Dependencies
+
+- Update zizmor (#46)
+- Update all non-major dependencies (#37)
+- Update bun toolchain to v1.4.2 (#45)
+- Update oxc toolchain (#47)
+- Update all non-major dependencies (#50)
+
+
+### Documentation
+
+- Renovate PR の扱いを AGENTS.md に追記する (#53)
+
+
+### Fixed
+
+- 埋め込みが付かなかった FxEmbed の配信を抑止の付け外しで修復する (#54)
+
+
+### Testing
+
+- 実在しうる投稿 ID を作るヘルパーを共有する (#43)
+
+
 ## [0.6.0] - 2026-09-10
 
 
@@ -137,6 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.6.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.4.0...v0.5.0
