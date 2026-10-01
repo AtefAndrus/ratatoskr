@@ -344,7 +344,7 @@ describe("停止中投稿の補完", () => {
       const delivery = new DeliveryService(context.routes, context.deliveries, {
         async sendPostUrl() {
           sendCalls += 1;
-          if (sendCalls > 1) return { messageId: "accepted" };
+          if (sendCalls > 1) return { messageId: "accepted", embedLinks: null };
           expect(context.deliveries.queueCounts()).toEqual({ pending: 1, sending: 1, failed: 0 });
           expect(context.backlog.get(targetId)).toMatchObject({
             nextCursor: "cursor-2",
@@ -358,7 +358,7 @@ describe("停止中投稿の補完", () => {
             leaseReceiverId: receiverB,
           });
           controller.abort();
-          return { messageId: "accepted" };
+          return { messageId: "accepted", embedLinks: null };
         },
       });
       const collector = new InternalPollCollector({
@@ -519,7 +519,7 @@ describe("永続送信キュー", () => {
       const service = new DeliveryService(context.routes, context.deliveries, {
         async sendPostUrl() {
           if (fail) throw new Error("Discord down");
-          return { messageId: "accepted" };
+          return { messageId: "accepted", embedLinks: null };
         },
       });
       const deliverable = {

@@ -15,7 +15,16 @@ import { metrics } from "../utils/metrics";
 const DELIVERY_RETRY_INTERVAL_MS = 30_000;
 
 export interface DiscordPostSender {
-  sendPostUrl(channelId: string, postUrl: string): Promise<{ messageId: string }>;
+  sendPostUrl(channelId: string, postUrl: string): Promise<SentPost>;
+}
+
+export interface SentPost {
+  messageId: string;
+  embedLinks: boolean | null;
+}
+
+export interface EmbedRepairScheduler {
+  schedule(target: { channelId: string; messageId: string; sentAtMs: number }): void;
 }
 
 export interface DeliveryResult {
@@ -92,6 +101,7 @@ export class DeliveryService {
     private readonly deliveries: DeliveryRepository,
     private readonly sender: DiscordPostSender,
     private readonly guildSettings: GuildSettingsRepository | null = null,
+    private readonly embedRepair: EmbedRepairScheduler | null = null,
   ) {
     this.deliveries.recoverSending(new Date().toISOString());
   }
@@ -243,6 +253,7 @@ export class DeliveryService {
           queued.channelId,
           rewritePostUrl(queued.postUrl, linkDomain),
         );
+        const sentAtMs = Date.now();
         this.deliveries.record({
           source: queued.source,
           sourceRecordId: queued.sourceRecordId,
@@ -256,8 +267,23 @@ export class DeliveryService {
           queued.routeId,
           queued.postId,
           sent.messageId,
-          new Date().toISOString(),
+          new Date(sentAtMs).toISOString(),
         );
+        if (linkDomain === "fixupx.com" || linkDomain === "fixvx.com") {
+          if (sent.embedLinks === true) {
+            try {
+              this.embedRepair?.schedule({
+                channelId: queued.channelId,
+                messageId: sent.messageId,
+                sentAtMs,
+              });
+            } catch (error) {
+              logger.warn("Embed repair scheduling failed", { channelId: queued.channelId, error });
+            }
+          } else {
+            metrics.increment("embed_repair.ineligible");
+          }
+        }
         metrics.increment("delivery.sent");
         logger.info("Delivered post", {
           source: queued.source,
