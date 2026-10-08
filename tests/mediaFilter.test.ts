@@ -518,34 +518,34 @@ describe("メディアによる配信の絞り込み", () => {
   });
 });
 
-describe("Web Push 経路のメディア判定", () => {
-  async function notify(input: {
-    pipeline: WebPushPipeline;
-    receiverId: number;
-    uri: string;
-    title: string;
-    tag?: string;
-  }): Promise<number> {
-    const payload = JSON.stringify({
-      data: {
-        uri: input.uri,
-        title: input.title,
-        ...(input.tag === undefined ? {} : { tag: input.tag }),
-      },
-    });
-    return await input.pipeline.process({
-      receiverId: input.receiverId,
-      keys,
-      notification: {
-        rawText: "{}",
-        channelId: "channel",
-        version: "1",
-        headers: { encoding: "aes128gcm" },
-        data: await encryptAes128Gcm(payload, keys),
-      },
-    });
-  }
+async function notify(input: {
+  pipeline: WebPushPipeline;
+  receiverId: number;
+  uri: string;
+  title: string;
+  tag?: string;
+}): Promise<number> {
+  const payload = JSON.stringify({
+    data: {
+      uri: input.uri,
+      title: input.title,
+      ...(input.tag === undefined ? {} : { tag: input.tag }),
+    },
+  });
+  return await input.pipeline.process({
+    receiverId: input.receiverId,
+    keys,
+    notification: {
+      rawText: "{}",
+      channelId: "channel",
+      version: "1",
+      headers: { encoding: "aes128gcm" },
+      data: await encryptAes128Gcm(payload, keys),
+    },
+  });
+}
 
+describe("Web Push 経路のメディア判定", () => {
   test("画像付きのみの経路があるとき、リポストも元投稿を引いて判定する", async () => {
     const context = createTestContext();
     try {
