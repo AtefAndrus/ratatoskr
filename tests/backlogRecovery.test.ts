@@ -14,6 +14,67 @@ import {
 } from "./helpers/database";
 
 describe("停止中投稿の補完", () => {
+  test("収集ループは履歴の末尾の形とnotBeforeより古いページを補完の完了として保存する", async () => {
+    const cases = [
+      {
+        cursorPage: { ...page([], "end-2", [], 498), endOfTimeline: true },
+        reason: "timeline_exhausted",
+      },
+      {
+        cursorPage: page([postAt("old", "2026-08-01T00:00:00.000Z")], "cursor-2", ["old"], 498),
+        reason: "not_before_reached",
+      },
+    ];
+    for (const { cursorPage, reason } of cases) {
+      const context = createTestContext();
+      try {
+        const receiverId = addReceiver(context);
+        const targetId = addTarget(context, { userId: "42", handle: "example" });
+        context.routes.add({ targetId, guildId: "g", channelId: "c" });
+        setRouteCreatedAt(context.db, targetId, "2026-09-01T00:00:00.000Z");
+        const controller = new AbortController();
+        const requests: Array<string | null> = [];
+        const client = {
+          async fetchUserTweetsAndReplies(
+            _target: { userId: string; handle: string },
+            cursor?: string,
+          ): Promise<InternalTimelineFetchResult> {
+            requests.push(cursor ?? null);
+            if (cursor === undefined) return page([post("3")], "end-1", ["3"], 499);
+            controller.abort();
+            return cursorPage;
+          },
+        } as XInternalGraphqlClient;
+        const collector = new InternalPollCollector({
+          receiverId,
+          receiverLabel: "receiver-a",
+          client,
+          targets: context.targets,
+          observations: context.observations,
+          backlog: context.backlog,
+          delivery: new DeliveryService(
+            context.routes,
+            context.deliveries,
+            createRecordingSender(),
+          ),
+          selectTargets: (targets) => targets,
+          scheduler: fastScheduler(),
+        });
+
+        await collector.run(controller.signal);
+
+        expect(requests).toEqual([null, "end-1"]);
+        expect(context.backlog.get(targetId)).toMatchObject({
+          state: "complete",
+          nextCursor: null,
+          lastStopReason: reason,
+        });
+      } finally {
+        context.db.close();
+      }
+    }
+  });
+
   test("通常取得と複数の補完ページを交互に取得し、ページ間重複を一度だけ送る", async () => {
     const context = createTestContext();
     try {
