@@ -9,7 +9,10 @@ on:
 permissions: {}
 
 # 存在確認から push までの間に別の実行が同じタグを書くと上書き防止が効かないため、同じコミットの実行を直列にする。
-# 全実行を 1 つの group にしないのは、待機中の実行が後続に置き換えられて別の Release の公開が落ちるため。
+# 全実行を 1 つの group にしないのは、待機中の実行が後続に置き換えられて別の Release の公開が落ちるため
+# (待機を積む queue: max は ci.yml が固定する actionlint 1.7.12 が受け付けない)。
+# Release のタグ名は下の検証で変換の起きない形に限るので、別のコミットの実行どうしで公開タグが重なるのは、
+# 同じ Git タグを別のコミットへ付け替え、前の実行が終わる前に公開し直した場合だけである。この場合は防がない。
 # 同じコミットで置き換えられる実行は、先行の実行が SHA のタグを書いた時点でどのみち失敗する。
 concurrency:
   group: publish-image-${{ github.sha }}
@@ -35,6 +38,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # metadata-action はタグの `/` などを `-` に置き換えるため、別のコミットの Release が同じ公開タグになりうる。
+      # その 2 つは concurrency group が分かれて上書き防止の確認をすり抜けるので、置き換えが起きない形に限る。
+      - name: Validate release tag
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag $TAG is not v<major>.<minor>.<patch>"; exit 1
+          fi
       - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: metadata
         with:
