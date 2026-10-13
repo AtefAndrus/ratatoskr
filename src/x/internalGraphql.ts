@@ -286,6 +286,15 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
   for (const instruction of instructions) {
     if (!isObject(instruction)) continue;
     const pinned = instruction.type === "TimelinePinEntry";
+    // 会話の続きを足す TimelineAddToModule の投稿はまだ配信対象にしていないが、
+    // 補完がそのページを空とみなして止まらないよう時刻だけは数える。
+    if (Array.isArray(instruction.moduleItems)) {
+      const moduleResults: unknown[] = [];
+      collectEntryResults(instruction.moduleItems, moduleResults);
+      for (const raw of moduleResults) {
+        unpinnedPostCreatedAts.push(classifyTweetResult(raw)?.createdAt ?? null);
+      }
+    }
     const entries: unknown[] = [];
     if (instruction.entry !== undefined) entries.push(instruction.entry);
     if (Array.isArray(instruction.entries)) entries.push(...instruction.entries);
@@ -468,7 +477,8 @@ function collectEntryResults(value: unknown, output: unknown[]): void {
     return;
   }
   if (!isObject(value)) return;
-  if (isObject(value.tweet_results) && value.tweet_results.result !== undefined) {
+  // 削除済みなどで result の無い tweet_results も枠として残す。落とすと補完がそのページを空とみなして止まる。
+  if (isObject(value.tweet_results)) {
     output.push(value.tweet_results.result);
     return;
   }

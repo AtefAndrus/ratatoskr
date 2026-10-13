@@ -106,6 +106,7 @@ describe("X 内部 GraphQL", () => {
                       entry("tweet-deleted", {
                         tweet_results: { result: { __typename: "TweetTombstone" } },
                       }),
+                      entry("tweet-unavailable", { tweet_results: {} }),
                       {
                         entryId: "who-to-follow-1",
                         content: {
@@ -128,6 +129,18 @@ describe("X 内部 GraphQL", () => {
                       },
                     ],
                   },
+                  {
+                    type: "TimelineAddToModule",
+                    moduleEntryId: "conversation-1",
+                    moduleItems: [
+                      {
+                        entryId: "conversation-1-tweet-5",
+                        item: {
+                          itemContent: tweet("5", { created_at: "Fri Sep 04 00:00:00 +0000 2026" }),
+                        },
+                      },
+                    ],
+                  },
                 ],
               },
             },
@@ -142,8 +155,10 @@ describe("X 内部 GraphQL", () => {
       unpinnedPostCreatedAts: [
         "2026-09-03T00:00:00.000Z",
         null,
+        null,
         "2026-09-03T00:00:00.000Z",
         "2026-09-03T00:00:00.000Z",
+        "2026-09-04T00:00:00.000Z",
       ],
     });
     expect(extractTimelinePage(payload).posts.map((post) => post.postId)).toEqual([
