@@ -137,6 +137,69 @@ describe("保持期間の整理の分割", () => {
     }
   });
 
+  test("AutoPush の生フレームと暗号文、外部とのやり取りの応答本文も期限で落とす", async () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const insertFrame = context.db.query(
+        `INSERT INTO autopush_frames (receiver_id, received_at, raw_text, encrypted_data_base64url)
+         VALUES ($receiverId, $receivedAt, $rawText, $encrypted)`,
+      );
+      insertFrame.run({
+        receiverId,
+        receivedAt: "2026-09-01T00:00:00.000Z",
+        rawText: "{}",
+        encrypted: "e",
+      });
+      insertFrame.run({
+        receiverId,
+        receivedAt: "2026-09-01T00:00:01.000Z",
+        rawText: null,
+        encrypted: "e",
+      });
+      insertFrame.run({
+        receiverId,
+        receivedAt: "2026-09-03T00:00:00.000Z",
+        rawText: "{}",
+        encrypted: "e",
+      });
+      const insertExchange = context.db.query(
+        `INSERT INTO external_exchanges (source, occurred_at, method, url, response_text)
+         VALUES ('x_push_registration', $occurredAt, 'POST', 'u', 'body')`,
+      );
+      insertExchange.run({ occurredAt: "2026-09-01T00:00:00.000Z" });
+      insertExchange.run({ occurredAt: "2026-09-03T00:00:00.000Z" });
+
+      const result = await applyRetentionInChunks({
+        maintenance: context.maintenance,
+        rawBefore: "2026-09-02T00:00:00.000Z",
+        rowsBefore: "2026-08-01T00:00:00.000Z",
+        watermarks: new Map(),
+        yieldToEventLoop: async () => undefined,
+      });
+
+      expect(result).toEqual({ rawTextCleared: 3, rowsDeleted: 0 });
+      expect(
+        context.db
+          .query(
+            "SELECT raw_text AS rawText, encrypted_data_base64url AS encrypted FROM autopush_frames ORDER BY id",
+          )
+          .all(),
+      ).toEqual([
+        { rawText: null, encrypted: null },
+        { rawText: null, encrypted: null },
+        { rawText: "{}", encrypted: "e" },
+      ]);
+      expect(
+        context.db
+          .query("SELECT response_text AS responseText FROM external_exchanges ORDER BY id")
+          .all(),
+      ).toEqual([{ responseText: null }, { responseText: "body" }]);
+    } finally {
+      context.db.close();
+    }
+  });
+
   test("期限切れの行を表ごとの上限件数ずつ消し、停止の合図で途中から抜ける", async () => {
     const context = createTestContext();
     try {
