@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 
 import { BACKLOG_PAGE_LIMIT } from "../src/db/repositories/backlog";
 import { applyMigrations } from "../src/db/schema";
+import { applyRetentionInChunks } from "../src/maintenance/retention";
 import { InternalPollCollector } from "../src/pipeline/internalPollCollector";
 import { DeliveryService } from "../src/services/deliveryService";
 import { AdaptivePollScheduler } from "../src/x/adaptivePollScheduler";
@@ -787,9 +788,11 @@ describe("永続送信キュー", () => {
         }),
       ).toMatchObject({ filtered: 1, sent: 0 });
       enqueue(context, targetId, route.id, "pending", "2020-01-01T00:00:00.000Z");
-      context.maintenance.applyRetention({
+      await applyRetentionInChunks({
+        maintenance: context.maintenance,
         rawBefore: "2026-09-01T00:00:00.000Z",
         rowsBefore: "2026-09-01T00:00:00.000Z",
+        watermarks: new Map(),
       });
       expect(context.deliveries.queueCounts().pending).toBe(1);
       expect(sender.sent).toEqual([]);
