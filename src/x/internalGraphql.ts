@@ -62,8 +62,8 @@ export interface InternalTimelineFetchResult extends InternalGraphqlResponse {
   parseError: string | null;
   posts: InternalTimelinePost[];
   regularPostIds: string[];
-  unpinnedPostCreatedAts: Array<string | null>;
-  endOfTimeline: boolean;
+  unpinnedPostIds: string[];
+  hasUnknownEntries: boolean;
   bottomCursor: string | null;
 }
 
@@ -119,8 +119,8 @@ export class XInternalGraphqlClient {
     });
     let posts: InternalTimelinePost[] = [];
     let regularPostIds: string[] = [];
-    let unpinnedPostCreatedAts: Array<string | null> = [];
-    let endOfTimeline = false;
+    let unpinnedPostIds: string[] = [];
+    let hasUnknownEntries = true;
     let parsedBottomCursor: string | null = null;
     let parseError: string | null = null;
     if (response.error === null && response.responseText !== null) {
@@ -128,8 +128,8 @@ export class XInternalGraphqlClient {
         const page = extractTimelinePage(JSON.parse(response.responseText));
         posts = page.posts;
         regularPostIds = page.regularPostIds;
-        unpinnedPostCreatedAts = page.unpinnedPostCreatedAts;
-        endOfTimeline = page.endOfTimeline;
+        unpinnedPostIds = page.unpinnedPostIds;
+        hasUnknownEntries = page.hasUnknownEntries;
         parsedBottomCursor = page.bottomCursor;
       } catch (failure) {
         parseError = errorMessage(failure);
@@ -140,8 +140,8 @@ export class XInternalGraphqlClient {
       parseError,
       posts,
       regularPostIds,
-      unpinnedPostCreatedAts,
-      endOfTimeline,
+      unpinnedPostIds,
+      hasUnknownEntries,
       bottomCursor: parsedBottomCursor,
     };
   }
@@ -269,13 +269,12 @@ export interface InternalTimelinePage {
   posts: InternalTimelinePost[];
   regularPostIds: string[];
   /**
-   * 固定投稿以外のエントリにある投稿の作成時刻。削除済みなどで読めない投稿は null にする。
-   * regularPostIds と違い会話モジュールも含め、読めない投稿も落とさない。
-   * どちらも落とすと、停止中の投稿を含むページを古いと誤って判定しうるため。
-   * おすすめユーザーのように投稿を持たないエントリは数えない。null にすると、それが載るページを古いと判定できなくなる。
+   * 固定投稿以外の投稿枠の投稿 ID。本文ではなく entryId (`tweet-<id>`、`...-tweet-<id>`) から取る。
+   * 本文から取ると、削除済みや閲覧不可の投稿の表し方が変わるたびに枠を数え落とし、補完を早く止めるため。
    */
-  unpinnedPostCreatedAts: Array<string | null>;
-  endOfTimeline: boolean;
+  unpinnedPostIds: string[];
+  /** 投稿枠ともカーソルとも投稿を持たないモジュールとも判別できないエントリや命令があった。 */
+  hasUnknownEntries: boolean;
   bottomCursor: string | null;
 }
 
@@ -285,21 +284,13 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
   if (instructions === null) throw new Error("応答に正常なタイムライン構造がありません");
   const results: unknown[] = [];
   const regularResults: unknown[] = [];
-  const unpinnedPostCreatedAts: Array<string | null> = [];
+  const slots: EntrySlots = { postIds: new Set(), hasUnknown: false };
   let bottomCursor: string | null = null;
   let sawBottomCursor = false;
   for (const instruction of instructions) {
     if (!isObject(instruction)) continue;
     const pinned = instruction.type === "TimelinePinEntry";
-    // 会話の続きを足す TimelineAddToModule の投稿はまだ配信対象にしていないが、
-    // 補完がそのページを古いと判定するときの材料には入れる。
-    if (Array.isArray(instruction.moduleItems)) {
-      const moduleResults: unknown[] = [];
-      collectEntryResults(instruction.moduleItems, moduleResults);
-      for (const raw of moduleResults) {
-        unpinnedPostCreatedAts.push(classifyTweetResult(raw)?.createdAt ?? null);
-      }
-    }
+    if (!pinned) collectInstructionSlots(instruction, slots);
     const entries: unknown[] = [];
     if (instruction.entry !== undefined) entries.push(instruction.entry);
     if (Array.isArray(instruction.entries)) entries.push(...instruction.entries);
@@ -314,11 +305,6 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
       const entryResults: unknown[] = [];
       collectEntryResults(entry.content, entryResults);
       results.push(...entryResults);
-      if (!pinned) {
-        for (const raw of entryResults) {
-          unpinnedPostCreatedAts.push(classifyTweetResult(raw)?.createdAt ?? null);
-        }
-      }
       if (!pinned && isRegularTimelineEntry(entry)) regularResults.push(...entryResults);
     }
   }
@@ -335,33 +321,52 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
   return {
     posts: [...posts.values()],
     regularPostIds: [...regularPostIds],
-    unpinnedPostCreatedAts,
-    endOfTimeline: isEndOfTimeline(instructions),
+    unpinnedPostIds: [...slots.postIds],
+    hasUnknownEntries: slots.hasUnknown,
     bottomCursor: sawBottomCursor ? bottomCursor : null,
   };
 }
 
-/**
- * 履歴の末尾として実測した形 (固定投稿とカーソルだけ) に限って真にする。
- * 投稿が読めないことから末尾を推すと、削除済み投稿や未知の構造だけのページで補完を早く止めるため。
- */
-function isEndOfTimeline(instructions: readonly unknown[]): boolean {
-  return instructions.every((instruction) => {
-    if (!isObject(instruction)) return false;
-    if (instruction.type === "TimelinePinEntry") return true;
-    if (Object.keys(instruction).every((key) => key === "type")) return true;
-    return (
-      instruction.type === "TimelineAddEntries" &&
-      Object.keys(instruction).every((key) => key === "type" || key === "entries") &&
-      Array.isArray(instruction.entries) &&
-      instruction.entries.every(
-        (entry) =>
-          isObject(entry) &&
-          isObject(entry.content) &&
-          typeof entry.content.cursorType === "string",
-      )
-    );
-  });
+interface EntrySlots {
+  postIds: Set<string>;
+  hasUnknown: boolean;
+}
+
+const POST_SLOT_ENTRY_ID = /(?:^|-)tweet-(\d+)$/;
+
+function collectInstructionSlots(instruction: Record<string, unknown>, slots: EntrySlots): void {
+  for (const [key, value] of Object.entries(instruction)) {
+    if (key === "type") continue;
+    if (key === "entries" && Array.isArray(value)) {
+      for (const entry of value) collectEntrySlots(entry, slots);
+    } else if (key === "entry") {
+      collectEntrySlots(value, slots);
+    } else if (key === "moduleItems" && Array.isArray(value)) {
+      for (const item of value) collectEntrySlots(item, slots);
+    } else if (key !== "moduleEntryId") {
+      slots.hasUnknown = true;
+    }
+  }
+}
+
+function collectEntrySlots(entry: unknown, slots: EntrySlots): void {
+  if (!isObject(entry) || typeof entry.entryId !== "string") {
+    slots.hasUnknown = true;
+    return;
+  }
+  const entryId = entry.entryId;
+  if (entryId.startsWith("cursor-") || entryId.startsWith("who-to-follow-")) return;
+  const postSlot = POST_SLOT_ENTRY_ID.exec(entryId);
+  if (postSlot !== null) {
+    slots.postIds.add(postSlot[1]!);
+    return;
+  }
+  const items = isObject(entry.content) ? entry.content.items : undefined;
+  if (Array.isArray(items)) {
+    for (const item of items) collectEntrySlots(item, slots);
+    return;
+  }
+  slots.hasUnknown = true;
 }
 
 /** TweetResultByRestId の応答 (`data.tweetResult.result`) から投稿 1 件を取り出す。 */
@@ -506,8 +511,7 @@ function collectEntryResults(value: unknown, output: unknown[]): void {
     return;
   }
   if (!isObject(value)) return;
-  // 削除済みなどで result の無い tweet_results も枠として残す。落とすと補完がそのページを空とみなして止まる。
-  if (isObject(value.tweet_results)) {
+  if (isObject(value.tweet_results) && value.tweet_results.result !== undefined) {
     output.push(value.tweet_results.result);
     return;
   }

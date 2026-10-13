@@ -2,6 +2,12 @@ import type { Database } from "bun:sqlite";
 
 export type BacklogState = "pending" | "complete";
 
+/**
+ * X が返す履歴を末尾までたどった実測は最大 162 ページだった。
+ * 終端の判定が X の応答の変化で効かなくなっても、補完が通常取得の枠を使い続けないよう上限を置く。
+ */
+export const BACKLOG_PAGE_LIMIT = 400;
+
 export interface BacklogProgress {
   targetId: number;
   targetHandle: string;
@@ -189,10 +195,9 @@ export class BacklogRepository {
     requestedCursor: string;
     bottomCursor: string | null;
     regularPostIds: readonly string[];
-    /** 固定投稿以外のエントリにある投稿の作成時刻。読めない投稿は null。 */
-    unpinnedPostCreatedAts: ReadonlyArray<string | null>;
-    /** 固定投稿とカーソルだけのページ。実測した履歴の末尾の形。 */
-    endOfTimeline: boolean;
+    /** 固定投稿以外の投稿枠の投稿時刻 (Snowflake から復元)。復元できない枠は null。 */
+    unpinnedPostTimesMs: ReadonlyArray<number | null>;
+    hasUnknownEntries: boolean;
     now: string;
   }): void {
     const progress = this.get(input.targetId);
@@ -213,14 +218,13 @@ export class BacklogRepository {
       (input.bottomCursor === input.requestedCursor || seen.has(input.bottomCursor));
     // 履歴の末尾で X は固定投稿だけのページと、数値を 1 ずつ変えた Bottom カーソルを返し続ける。
     // カーソルの一致では循環を検出できないため、ページの中身で終端を判定する。
+    // 判別できないエントリがあれば末尾とも古いとも決めない。停止中の投稿かもしれないため。
+    const timelineExhausted = !input.hasUnknownEntries && input.unpinnedPostTimesMs.length === 0;
     const notBeforeMs = new Date(progress.notBefore).getTime();
-    // 時刻の読めない投稿が 1 件でもあれば古いと決めない。それが停止中の投稿かもしれないため。
     const notBeforeReached =
-      input.unpinnedPostCreatedAts.length > 0 &&
-      input.unpinnedPostCreatedAts.every((createdAt) => {
-        const createdAtMs = createdAt === null ? Number.NaN : new Date(createdAt).getTime();
-        return Number.isFinite(createdAtMs) && createdAtMs < notBeforeMs;
-      });
+      !input.hasUnknownEntries &&
+      input.unpinnedPostTimesMs.length > 0 &&
+      input.unpinnedPostTimesMs.every((timeMs) => timeMs !== null && timeMs < notBeforeMs);
     const reason =
       overlap >= 3
         ? "known_posts_overlap"
@@ -228,11 +232,13 @@ export class BacklogRepository {
           ? "bottom_cursor_missing"
           : cursorCycle
             ? "cursor_cycle"
-            : input.endOfTimeline
+            : timelineExhausted
               ? "timeline_exhausted"
               : notBeforeReached
                 ? "not_before_reached"
-                : "page_saved";
+                : progress.pagesFetched + 1 >= BACKLOG_PAGE_LIMIT
+                  ? "page_limit_reached"
+                  : "page_saved";
     const complete = reason !== "page_saved";
     this.db
       .query(

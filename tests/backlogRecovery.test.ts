@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 
+import { BACKLOG_PAGE_LIMIT } from "../src/db/repositories/backlog";
 import { applyMigrations } from "../src/db/schema";
 import { InternalPollCollector } from "../src/pipeline/internalPollCollector";
 import { DeliveryService } from "../src/services/deliveryService";
@@ -17,7 +18,7 @@ describe("停止中投稿の補完", () => {
   test("収集ループは履歴の末尾の形とnotBeforeより古いページを補完の完了として保存する", async () => {
     const cases = [
       {
-        cursorPage: { ...page([], "end-2", [], 498), endOfTimeline: true },
+        cursorPage: page([], "end-2", [], 498),
         reason: "timeline_exhausted",
       },
       {
@@ -180,8 +181,8 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "cursor-1",
         bottomCursor: "cursor-2",
         regularPostIds: ["known-1", "known-2", "known-3"],
-        unpinnedPostCreatedAts: [null],
-        endOfTimeline: false,
+        unpinnedPostTimesMs: [null],
+        hasUnknownEntries: false,
         now: "2026-09-03T00:00:05.000Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
@@ -219,8 +220,8 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "first-cursor",
         bottomCursor: "older-cursor",
         regularPostIds: ["known-1", "known-2", "known-3"],
-        unpinnedPostCreatedAts: [null],
-        endOfTimeline: false,
+        unpinnedPostTimesMs: [null],
+        hasUnknownEntries: false,
         now: "2026-09-03T00:00:03.000Z",
       });
       seedSuccessfulObservation(
@@ -355,8 +356,8 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "cursor-1",
         bottomCursor: "cursor-2",
         regularPostIds: [],
-        unpinnedPostCreatedAts: [null],
-        endOfTimeline: false,
+        unpinnedPostTimesMs: [null],
+        hasUnknownEntries: false,
         now: "2026-09-03T00:01:01.001Z",
       });
       context.backlog.savePage({
@@ -365,8 +366,8 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "cursor-1",
         bottomCursor: "stale-cursor",
         regularPostIds: [],
-        unpinnedPostCreatedAts: [null],
-        endOfTimeline: false,
+        unpinnedPostTimesMs: [null],
+        hasUnknownEntries: false,
         now: "2026-09-03T00:01:01.002Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
@@ -487,8 +488,8 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "cursor-1",
         bottomCursor: "cursor-1",
         regularPostIds: [],
-        unpinnedPostCreatedAts: [null],
-        endOfTimeline: false,
+        unpinnedPostTimesMs: [null],
+        hasUnknownEntries: false,
         now: "2026-09-03T00:00:03.000Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
@@ -500,7 +501,7 @@ describe("停止中投稿の補完", () => {
     }
   });
 
-  test("投稿の読めないページでは続け、固定投稿とカーソルだけのページは毎回別のBottomカーソルが付いても完了にする", () => {
+  test("判別できないエントリのあるページでは続け、投稿枠もそれも無いページは毎回別のBottomカーソルが付いても完了にする", () => {
     const context = createTestContext();
     try {
       const receiverId = addReceiver(context);
@@ -512,7 +513,7 @@ describe("停止中投稿の補完", () => {
       const savePage = (
         requestedCursor: string,
         bottomCursor: string,
-        endOfTimeline: boolean,
+        hasUnknownEntries: boolean,
       ): void => {
         context.backlog.acquire(
           targetId,
@@ -526,19 +527,19 @@ describe("停止中投稿の補完", () => {
           requestedCursor,
           bottomCursor,
           regularPostIds: [],
-          unpinnedPostCreatedAts: [],
-          endOfTimeline,
+          unpinnedPostTimesMs: [],
+          hasUnknownEntries,
           now: "2026-09-03T00:00:02.000Z",
         });
       };
 
-      savePage("end-rWY", "end-rWU", false);
+      savePage("end-rWY", "end-rWU", true);
       expect(context.backlog.get(targetId)).toMatchObject({
         state: "pending",
         lastStopReason: "page_saved",
       });
 
-      savePage("end-rWU", "end-rWQ", true);
+      savePage("end-rWU", "end-rWQ", false);
       expect(context.backlog.get(targetId)).toMatchObject({
         state: "complete",
         nextCursor: null,
@@ -549,7 +550,7 @@ describe("停止中投稿の補完", () => {
     }
   });
 
-  test("非固定投稿がすべてnotBeforeより古いページで完了し、境界に届くページと時刻不明の投稿を含むページでは続ける", () => {
+  test("投稿枠がすべてnotBeforeより古いページで完了し、境界に届くページと時刻不明の枠や判別できないエントリを含むページでは続ける", () => {
     const context = createTestContext();
     try {
       const receiverId = addReceiver(context);
@@ -561,7 +562,8 @@ describe("停止中投稿の補完", () => {
       const savePage = (
         requestedCursor: string,
         bottomCursor: string,
-        unpinnedPostCreatedAts: Array<string | null>,
+        postTimes: Array<string | null>,
+        hasUnknownEntries = false,
       ): void => {
         context.backlog.acquire(
           targetId,
@@ -575,8 +577,10 @@ describe("停止中投稿の補完", () => {
           requestedCursor,
           bottomCursor,
           regularPostIds: [],
-          unpinnedPostCreatedAts,
-          endOfTimeline: false,
+          unpinnedPostTimesMs: postTimes.map((value) =>
+            value === null ? null : Date.parse(value),
+          ),
+          hasUnknownEntries,
           now: "2026-09-03T00:00:02.000Z",
         });
       };
@@ -588,10 +592,10 @@ describe("停止中投稿の補完", () => {
         lastStopReason: "page_saved",
       });
 
-      savePage("cursor-2", "cursor-3", [null]);
+      savePage("cursor-2", "cursor-3", ["2026-08-30T00:00:00.000Z", null]);
       expect(context.backlog.get(targetId)).toMatchObject({ state: "pending" });
 
-      savePage("cursor-3", "cursor-4", ["2026-08-30T00:00:00.000Z", null]);
+      savePage("cursor-3", "cursor-4", ["2026-08-30T00:00:00.000Z"], true);
       expect(context.backlog.get(targetId)).toMatchObject({ state: "pending" });
 
       savePage("cursor-4", "cursor-5", ["2026-08-30T00:00:00.000Z", "2026-08-31T00:00:00.000Z"]);
@@ -600,6 +604,43 @@ describe("停止中投稿の補完", () => {
         nextCursor: null,
         pagesFetched: 4,
         lastStopReason: "not_before_reached",
+      });
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("終端を判定できないまま上限のページ数に達したら完了にする", () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const targetId = addTarget(context, { handle: "example" });
+      context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      context.backlog.ensure(targetId, "2026-09-02T00:00:00.000Z");
+      context.backlog.startFromLatest(targetId, "cursor-0", "2026-09-03T00:00:00.000Z");
+      for (let index = 0; index < BACKLOG_PAGE_LIMIT; index += 1) {
+        expect(context.backlog.get(targetId)?.state).toBe("pending");
+        context.backlog.acquire(
+          targetId,
+          receiverId,
+          "2026-09-03T00:00:01.000Z",
+          "2026-09-03T00:01:01.000Z",
+        );
+        context.backlog.savePage({
+          targetId,
+          receiverId,
+          requestedCursor: `cursor-${index}`,
+          bottomCursor: `cursor-${index + 1}`,
+          regularPostIds: [],
+          unpinnedPostTimesMs: [],
+          hasUnknownEntries: true,
+          now: "2026-09-03T00:00:02.000Z",
+        });
+      }
+      expect(context.backlog.get(targetId)).toMatchObject({
+        state: "complete",
+        pagesFetched: BACKLOG_PAGE_LIMIT,
+        lastStopReason: "page_limit_reached",
       });
     } finally {
       context.db.close();
@@ -664,8 +705,8 @@ describe("永続送信キュー", () => {
             requestedCursor: "cursor-1",
             bottomCursor: "cursor-2",
             regularPostIds: ["1"],
-            unpinnedPostCreatedAts: [null],
-            endOfTimeline: false,
+            unpinnedPostTimesMs: [null],
+            hasUnknownEntries: false,
             now: "2026-09-03T00:00:03.000Z",
           });
         },
@@ -891,10 +932,15 @@ function page(
     parseError: null,
     posts,
     regularPostIds,
-    unpinnedPostCreatedAts: posts.map((value) => value.createdAt),
-    endOfTimeline: false,
+    unpinnedPostIds: posts.map((value) => snowflakeAt(value.createdAt)),
+    hasUnknownEntries: false,
     bottomCursor,
   };
+}
+
+/** 補完の完了判定は投稿枠の ID から時刻を復元するので、作成時刻に合う Snowflake を作る。 */
+function snowflakeAt(createdAt: string): string {
+  return String((BigInt(Date.parse(createdAt)) - 1_288_834_974_657n) << 22n);
 }
 
 function setRouteCreatedAt(db: Database, targetId: number, createdAt: string): void {

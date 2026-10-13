@@ -87,7 +87,7 @@ describe("X 内部 GraphQL", () => {
     expect(posts.every((post) => post.createdAt === "2026-09-03T00:00:00.000Z")).toBe(true);
   });
 
-  test("Bottomカーソルを抽出し、固定投稿以外の投稿の時刻を読めない投稿も含めて返す", () => {
+  test("Bottomカーソルを抽出し、固定投稿を重なり判定と投稿枠から外す", () => {
     const payload = {
       data: {
         user: {
@@ -97,47 +97,30 @@ describe("X 内部 GraphQL", () => {
                 instructions: [
                   {
                     type: "TimelinePinEntry",
-                    entry: entry("tweet-pinned", tweet("9", {})),
+                    entry: entry("tweet-9", tweet("9", {})),
                   },
                   {
                     type: "TimelineAddEntries",
                     entries: [
                       entry("tweet-2", tweet("2", {})),
-                      entry("tweet-deleted", {
-                        tweet_results: { result: { __typename: "TweetTombstone" } },
-                      }),
-                      entry("tweet-unavailable", { tweet_results: {} }),
                       {
-                        entryId: "who-to-follow-1",
-                        content: {
-                          entryType: "TimelineTimelineModule",
-                          items: [{ item: { itemContent: { user_results: { result: {} } } } }],
-                        },
-                      },
-                      {
-                        entryId: "conversation-1",
+                        entryId: "profile-conversation-1",
                         content: {
                           items: [
-                            { item: { itemContent: tweet("1", {}) } },
-                            { item: { itemContent: tweet("0", {}) } },
+                            {
+                              entryId: "profile-conversation-1-tweet-1",
+                              item: { itemContent: tweet("1", {}) },
+                            },
+                            {
+                              entryId: "profile-conversation-1-tweet-0",
+                              item: { itemContent: tweet("0", {}) },
+                            },
                           ],
                         },
                       },
                       {
                         entryId: "cursor-bottom",
                         content: { cursorType: "Bottom", value: "cursor-2" },
-                      },
-                    ],
-                  },
-                  {
-                    type: "TimelineAddToModule",
-                    moduleEntryId: "conversation-1",
-                    moduleItems: [
-                      {
-                        entryId: "conversation-1-tweet-5",
-                        item: {
-                          itemContent: tweet("5", { created_at: "Fri Sep 04 00:00:00 +0000 2026" }),
-                        },
                       },
                     ],
                   },
@@ -152,15 +135,8 @@ describe("X 内部 GraphQL", () => {
     expect(extractTimelinePage(payload)).toMatchObject({
       bottomCursor: "cursor-2",
       regularPostIds: ["2"],
-      endOfTimeline: false,
-      unpinnedPostCreatedAts: [
-        "2026-09-03T00:00:00.000Z",
-        null,
-        null,
-        "2026-09-03T00:00:00.000Z",
-        "2026-09-03T00:00:00.000Z",
-        "2026-09-04T00:00:00.000Z",
-      ],
+      unpinnedPostIds: ["2", "1", "0"],
+      hasUnknownEntries: false,
     });
     expect(extractTimelinePage(payload).posts.map((post) => post.postId)).toEqual([
       "9",
@@ -170,7 +146,7 @@ describe("X 内部 GraphQL", () => {
     ]);
   });
 
-  test("固定投稿とカーソルだけのページに限って履歴の末尾とみなす", () => {
+  test("投稿枠を本文ではなくentryIdから数え、判別できないエントリや命令を知らせる", () => {
     const cursors = [
       { entryId: "cursor-top-1", content: { cursorType: "Top", value: "top" } },
       { entryId: "cursor-bottom-1", content: { cursorType: "Bottom", value: "bottom" } },
@@ -183,35 +159,50 @@ describe("X 内部 GraphQL", () => {
         pin,
         { type: "TimelineAddEntries", entries: cursors },
       ]),
-    ).toMatchObject({ endOfTimeline: true, unpinnedPostCreatedAts: [], bottomCursor: "bottom" });
-    expect(
-      timelinePage([
-        pin,
-        {
-          type: "TimelineAddEntries",
-          entries: [entry("tweet-unavailable", { tweet_results: {} }), ...cursors],
-        },
-      ]).endOfTimeline,
-    ).toBe(false);
+    ).toMatchObject({ unpinnedPostIds: [], hasUnknownEntries: false, bottomCursor: "bottom" });
     expect(
       timelinePage([
         pin,
         {
           type: "TimelineAddEntries",
           entries: [
-            { entryId: "who-to-follow-1", content: { entryType: "TimelineTimelineModule" } },
+            entry("tweet-124", { tweet_results: {} }),
+            {
+              entryId: "profile-conversation-2",
+              content: {
+                items: [
+                  {
+                    entryId: "profile-conversation-2-tweet-123",
+                    item: { itemContent: { itemType: "TimelineTombstone", tombstoneInfo: {} } },
+                  },
+                ],
+              },
+            },
+            {
+              entryId: "who-to-follow-1",
+              content: {
+                items: [{ entryId: "who-to-follow-1-user-1", item: { itemContent: {} } }],
+              },
+            },
             ...cursors,
           ],
         },
-      ]).endOfTimeline,
-    ).toBe(false);
+        {
+          type: "TimelineAddToModule",
+          moduleEntryId: "profile-conversation-2",
+          moduleItems: [{ entryId: "profile-conversation-2-tweet-125", item: { itemContent: {} } }],
+        },
+      ]),
+    ).toMatchObject({ unpinnedPostIds: ["124", "123", "125"], hasUnknownEntries: false });
     expect(
       timelinePage([
         pin,
-        { type: "TimelineAddEntries", entries: cursors },
-        { type: "TimelineAddToModule", moduleItems: [] },
-      ]).endOfTimeline,
-    ).toBe(false);
+        { type: "TimelineAddEntries", entries: [{ entryId: "promoted-1", content: {} }] },
+      ]),
+    ).toMatchObject({ unpinnedPostIds: [], hasUnknownEntries: true });
+    expect(
+      timelinePage([pin, { type: "TimelineTerminateTimeline", direction: "Bottom" }]),
+    ).toMatchObject({ unpinnedPostIds: [], hasUnknownEntries: true });
   });
 
   test("API errors、タイムライン欠落、不正なBottomカーソルを拒否する", () => {
@@ -333,6 +324,48 @@ describe("X 内部 GraphQL", () => {
     expect(result.posts).toEqual([]);
     expect(requested!.pathname).toBe("/i/api/graphql/query-2/UserTweetsAndReplies");
     expect(JSON.parse(requested!.searchParams.get("variables")!)).toMatchObject({ userId: "42" });
+  });
+
+  test("クライアントは補完の完了判定に使う投稿枠と判別できないエントリを解析結果から渡す", async () => {
+    const responses = [
+      [entry("tweet-2", tweet("2", {}))],
+      [{ entryId: "promoted-1", content: {} }],
+    ].map((entries) =>
+      JSON.stringify({
+        data: {
+          user: {
+            result: {
+              timeline: { timeline: { instructions: [{ type: "TimelineAddEntries", entries }] } },
+            },
+          },
+        },
+      }),
+    );
+    const fetchImplementation = (async () =>
+      new Response(responses.shift(), { status: 200 })) as unknown as typeof fetch;
+    const client = new XInternalGraphqlClient(
+      { authToken: "a", csrfToken: "c", bearerToken: "b" },
+      {
+        operations: {
+          UserTweetsAndReplies: { queryId: "query", features: {} },
+          TweetResultByRestId: { queryId: "lookup", features: {} },
+        },
+        pairs: [{ verification: "AQID", animationKey: "k" }],
+      },
+      fetchImplementation,
+    );
+    const target = { userId: "42", handle: "example" };
+
+    expect(await client.fetchUserTweetsAndReplies(target, "cursor-1")).toMatchObject({
+      parseError: null,
+      unpinnedPostIds: ["2"],
+      hasUnknownEntries: false,
+    });
+    expect(await client.fetchUserTweetsAndReplies(target, "cursor-2")).toMatchObject({
+      parseError: null,
+      unpinnedPostIds: [],
+      hasUnknownEntries: true,
+    });
   });
 
   test("Bottomカーソルを要求へ渡し、429とHTTP 200のエラー本文を成功扱いしない", async () => {
