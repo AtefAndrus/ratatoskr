@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.7.0] - 2026-10-13
+
+
+### Added
+
+- Release の公開で GHCR へコンテナイメージを公開する (#58)
+
+
+### Dependencies
+
+- Update oxc toolchain (#51)
+- Update jdx/mise-action action to v5 (#55)
+- Update all non-major dependencies (#52)
+
+
+### Fixed
+
+- イメージ公開の起動と既存タグの確認を disqord と揃える (#59)
+- 補完の空回りを止め、再観測の重複記録をやめる (#60)
+
+
+### Testing
+
+- Web Push 判定テストの notify をモジュールスコープへ移す (#56)
+
+
 ## [0.6.1] - 2026-10-01
 
 
@@ -164,6 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.7.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.5.0...v0.5.1
