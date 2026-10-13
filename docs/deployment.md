@@ -75,7 +75,7 @@ Secret を直したあとは、失敗した workflow を GitHub Actions の **Re
 `.github/workflows/publish-image.yml` は、Coolify へのデプロイと同じ Release の公開を契機に Docker イメージをビルドし、`ghcr.io/atefandrus/ratatoskr` へ push する。
 Coolify はリポジトリから自分でビルドするため、このイメージを使わない。
 
-- prerelease の公開では動かない。GitHub Actions の画面から手動実行もできる。
+- prerelease の公開では動かず、prerelease を後から正式版に変えたときに動く。Coolify へのデプロイ（`deploy.yml`）は Release の公開で動くので、prerelease を正式版に変えたときはイメージの公開だけが動く。GitHub Actions の画面から手動実行もできる。
 - タグは Release のタグ名 (`v0.7.0` など) とコミットの完全な SHA の 2 つで、`latest` は付けない。手動実行では完全な SHA だけを付ける。
 - Release のタグ名は `v<major>.<minor>.<patch>` の形でなければ失敗する。
 - push の前に各タグがレジストリに既にあるかを確かめ、あれば push せずに失敗する。GHCR はタグを書き換え不可にできないため、同じタグの上書きをここで防ぐ。存在を確かめられなかった場合 (認証やネットワークの失敗) も push しない。
