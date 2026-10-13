@@ -73,7 +73,7 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 
 | 問い | 見る場所 | 読み方 |
 | ---- | -------- | ------ |
-| 停止中投稿の補完がどこまで進んだか | `/admin/backlog` の `progress` | `state` が `pending` なら `nextCursor` から再開する。`lastStopReason` は直近ページの保存、429などの取得失敗、既知投稿との重なり、Bottomカーソルの欠落、カーソル循環、固定投稿以外の投稿枠も判別できないエントリも無いページ (`timeline_exhausted`)、投稿枠がすべて `notBefore` より古いページ (`not_before_reached`)、400 ページの上限 (`page_limit_reached`) のいずれで止まったかを示す。`page_limit_reached` は X の応答が変わって終端を判定できなくなった兆候なので、`/admin/observations/<id>` で直近の補完ページの生応答を確かめる |
+| 停止中投稿の補完がどこまで進んだか | `/admin/backlog` の `progress` | `state` が `pending` なら `nextCursor` から再開する。`lastStopReason` は直近ページの保存、429などの取得失敗、既知投稿との重なり、Bottomカーソルの欠落、カーソル循環、固定投稿以外の投稿枠も判別できないエントリも無いページ (`timeline_exhausted`)、投稿枠がすべて `notBefore` より古いページ (`not_before_reached`)、400 ページの上限 (`page_limit_reached`) のいずれで止まったかを示す。`page_limit_reached` では、それより先のページにある停止中の投稿は補完されない。X の応答が変わって終端を判定できなくなった可能性があるので、`/admin/observations/<id>` で直近の補完ページの生応答を確かめる |
 | Discord送信が滞留しているか | `/admin/backlog` の `queue` | `pending` は未送信、`sending` は送信中、`failed` は直近の送信に失敗して再試行を待つ件数である。送信中にプロセスが停止した行は次回起動時に `pending` へ戻る |
 | rate limit に余裕があるか | `/admin/observations` の `rateLimitLimit`、`rateLimitRemaining`、`rateLimitResetAt` | 上限は応答ヘッダから取るので `rateLimitLimit` を見る (2026-09-05 の実測では 500 / 15 分)。`rateLimitRemaining` が `AdaptivePollScheduler` の予約枠 100 に近づくとポーリングが止まるので、そこまでの余裕で判断する |
 | 監視対象が分担できているか | `/admin/metrics` の `receivers[].internalPoll.targets` | どの対象も原則 2 台に載る。受信 2 台以下では全員が全対象を持つ。担当がゼロになる受信には認証確認用に 1 件を足すため、対象が受信より少ない構成では 3 台以上に載る対象が出る |

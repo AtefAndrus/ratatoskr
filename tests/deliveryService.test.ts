@@ -91,6 +91,51 @@ describe("DeliveryService", () => {
     }
   });
 
+  test("メディアで除外した投稿の計数は初出だけに付け、再観測では数えない", async () => {
+    const context = createTestContext();
+    metrics.reset();
+    try {
+      const target = addTarget(context, { handle: "example" });
+      context.routes.add({ targetId: target, guildId: "g", channelId: "c", mediaFilter: "photo" });
+      const service = new DeliveryService(
+        context.routes,
+        context.deliveries,
+        createRecordingSender(),
+      );
+      const post = (postId: string, mediaTypes: [] | null, reobserved: boolean) => ({
+        source: "internal_graphql" as const,
+        sourceRecordId: 1,
+        targetId: target,
+        postId,
+        postUrl: `https://x.com/example/status/${postId}`,
+        kinds: ["posts"] as const,
+        mediaTypes,
+        reobserved,
+      });
+      await service.deliverBatch(
+        [post("1", [], true), post("2", null, true)],
+        new Date().toISOString(),
+      );
+      const afterReobserved = metrics.snapshot().counters;
+      expect(afterReobserved["delivery.filtered"]).toBeUndefined();
+      expect(afterReobserved["delivery.filtered_media"]).toBeUndefined();
+      expect(afterReobserved["delivery.media_unknown"]).toBeUndefined();
+
+      await service.deliverBatch(
+        [post("1", [], false), post("2", null, false)],
+        new Date().toISOString(),
+      );
+      expect(metrics.snapshot().counters).toMatchObject({
+        "delivery.filtered": 2,
+        "delivery.filtered_media": 2,
+        "delivery.media_unknown": 1,
+      });
+    } finally {
+      metrics.reset();
+      context.db.close();
+    }
+  });
+
   test("送信失敗時は claim を解放して再送できる", async () => {
     const context = createTestContext();
     try {
