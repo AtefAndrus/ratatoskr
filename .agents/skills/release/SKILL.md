@@ -1,12 +1,12 @@
 ---
 name: release
-description: Run the ratatoskr release process. Use when cutting a new version (e.g. `/release 0.7.0`) — bumps the version, generates a versioned CHANGELOG.md, commits, tags, pushes, and publishes a GitHub release with automatically generated notes, which triggers the Coolify deployment.
+description: Run the ratatoskr release process. Use when cutting a new version (e.g. `/release 0.7.0`) — bumps the version, generates a versioned CHANGELOG.md, commits, tags, pushes, and publishes a GitHub release with automatically generated notes, which triggers the Coolify deployment and the GHCR image publish.
 ---
 
 # Release Workflow
 
 ratatoskr の v<version> をリリースする。
-GitHub Release の公開を契機に `.github/workflows/deploy.yml` が Coolify へデプロイする。
+GitHub Release の公開を契機に `.github/workflows/deploy.yml` が Coolify へデプロイし、`.github/workflows/publish-image.yml` が GHCR へイメージを公開する。
 
 コミット、push、Release 作成は `scripts/release-publish.sh` だけが行う。
 `.claude/settings.local.json` の許可ルールは `/bin/bash <リポジトリの絶対パス>/scripts/release-publish.sh` の起動だけを許可しており、`git push` そのものは許可していない。
@@ -73,4 +73,5 @@ main の ruleset は必須ステータスチェックを課すが Admin ロー�
 
 1. スクリプトが最後に出力した Release の URL を開ける: `gh release view v<version>`
 2. Deploy workflow が成功している: `gh run list --workflow deploy.yml -L 1`
-3. Release の URL をユーザーに報告する
+3. イメージ公開の workflow が成功している: `gh run list --workflow publish-image.yml -L 1`
+4. Release の URL をユーザーに報告する

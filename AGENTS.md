@@ -61,7 +61,7 @@ bun test             # bun:test
 - Renovate が生成した PR は上の規約の例外であり、タイトル、本文、ブランチを直接変更しない。
 - 表示や生成内容を変える場合は `renovate.json5` を変更する。
 - main 更新や競合では Renovate の自動再生成を待ち、更新後の head で CI 成功を確認してからマージする。
-- Release: `/release <version>` skill (`.agents/skills/release/SKILL.md`) で行う。GitHub Release の公開で Coolify へデプロイされる。リリースノートは GitHub の自動生成に任せ、マイグレーション、環境変数、Coolify 側の手作業があるときだけ移行とデプロイ後の確認の節を前に付ける。
+- Release: `/release <version>` skill (`.agents/skills/release/SKILL.md`) で行う。GitHub Release の公開で Coolify へデプロイされ、GHCR (`ghcr.io/atefandrus/ratatoskr`) へイメージが公開される。リリースノートは GitHub の自動生成に任せ、マイグレーション、環境変数、Coolify 側の手作業があるときだけ移行とデプロイ後の確認の節を前に付ける。
 - main への直接 push はリリースコミットだけで、`scripts/release-publish.sh` が行う。Claude Code に許可するのはこのスクリプトの起動だけで、各自の `.claude/settings.local.json` に `Bash(/bin/bash <リポジトリの絶対パス>/scripts/release-publish.sh *)` を置く。`git push` 自体の許可ルールは足さない。`bun run` や相対パスで許可しないのは、package.json の scripts、`node_modules/.bin`、cwd に置いた同名ファイルで実行内容を差し替えられるためである。スクリプトは作業中のリポジトリで commit や push をせず、PATH をシステムのディレクトリ (`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`) に固定したうえで、作業ツリーから 2 ファイルのバイト列だけを読んで、GIT_* 環境変数を外した一時 bare リポジトリで commit を組み立て、検証した object ID だけを push する。作業中のリポジトリの設定と状態 (clean filter、hook、replace refs、core.fsmonitor、remote の pushurl や vcs helper など) で、検査した内容と push される内容をずらしたり、別のコマンドを実行させたりできるためである。push より前に作業中のリポジトリで実行する git は `rev-parse --verify HEAD` だけにとどめる。検査や組み立てを作業中のリポジトリへ移すと、許可が任意の内容を main へ push する経路になる。
 
 ## Gotchas
