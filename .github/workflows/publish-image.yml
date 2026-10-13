@@ -2,7 +2,9 @@ name: Publish image to GHCR
 
 on:
   release:
-    types: [published]
+    # published ではなく released にする。published は prerelease の公開でも起動する一方、
+    # prerelease を後から正式版に変えたときには起動しないため、その Release のイメージが公開されない
+    types: [released]
   # Release を作り直さずにイメージだけ出し直したいときに使う。タグは完全な SHA だけになる
   workflow_dispatch:
 
@@ -24,7 +26,6 @@ env:
 
 jobs:
   publish:
-    if: github.event_name != 'release' || !github.event.release.prerelease
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,7 +51,7 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "::error::release tag $TAG is not v<major>.<minor>.<patch>"; exit 1
           fi
       - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -63,22 +64,36 @@ jobs:
             type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
             type=sha,format=long,prefix=
       # GHCR はタグを書き換え不可にできないため、push 前に既存タグを確かめて上書きを防ぐ。
-      # 「存在しない」以外の失敗 (認証やネットワーク) は存在を否定できないので、push せずに落とす。
-      # 末尾一致にしないのは、containerd が巨大な既存 manifest の拒否も「<ref>: not found」で終わる文で返すため。
+      # 判定はレジストリの manifest API の HTTP 状態で行う。404 だけを「無い」と扱い、
+      # それ以外の応答 (認証失敗など) は存在を否定できないので、push せずに落とす。
+      # buildx のエラー文面で判定しないのは、文面が buildx の版で変わりうるため。
       - name: Refuse to overwrite existing tags
         env:
           TAGS: ${{ steps.metadata.outputs.tags }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
+          # shell を指定しない run は pipefail を有効にしないので、token 取得の curl の失敗を落とすために明示する
+          set -o pipefail
+          repo=${IMAGE#ghcr.io/}
+          # package がまだ無いときも pull の token は発行され、manifest は 404 を返す
+          token=$(curl -fsS -u "${GITHUB_ACTOR}:${GITHUB_TOKEN}" \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" | jq -er .token)
+          echo "::add-mask::$token"
+          exists=0
           while IFS= read -r ref; do
             [ -n "$ref" ] || continue
-            if out=$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$ref" 2>&1); then
-              echo "::error::$ref already exists ($out)"; exit 1
-            fi
-            if [ "${out##*$'\n'}" != "ERROR: $ref: not found" ]; then
-              echo "::error::cannot confirm that $ref is absent: $out"; exit 1
-            fi
-            echo "$ref is free"
+            tag=${ref##*:}
+            code=$(curl -sS -o /dev/null --head -w '%{http_code}' \
+              -H "Authorization: Bearer $token" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+              "https://ghcr.io/v2/${repo}/manifests/${tag}")
+            case "$code" in
+              404) echo "$ref is not in the registry" ;;
+              200) echo "::error::$ref already exists in the registry"; exists=1 ;;
+              *) echo "::error::could not check $ref (HTTP $code)"; exit 1 ;;
+            esac
           done <<< "$TAGS"
+          [ "$exists" -eq 0 ]
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: push
         with:
