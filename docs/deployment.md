@@ -79,7 +79,7 @@ Coolify はリポジトリから自分でビルドするため、このイメー
 - タグは Release のタグ名 (`v0.7.0` など) とコミットの完全な SHA の 2 つで、`latest` は付けない。手動実行では完全な SHA だけを付ける。
 - Release のタグ名は `v<major>.<minor>.<patch>` の形でなければ失敗する。
 - push の前に各タグがレジストリに既にあるかを確かめ、あれば push せずに失敗する。GHCR はタグを書き換え不可にできないため、同じタグの上書きをここで防ぐ。存在を確かめられなかった場合 (認証やネットワークの失敗) も push しない。
-- そのため、push まで済んだ実行の再実行や、Release で公開済みのコミットでの手動実行は失敗する。出し直すときは新しいコミットか新しい Release で行う。
+- そのため、push まで済んだ実行の再実行や、Release で公開済みのコミットでの手動実行は失敗する。公開済みのコミットに新しい Release を付けても、コミットの SHA のタグが重なるので失敗する。出し直すには新しいコミットが要り、Release 経由なら、その新しいコミットに Release を作る。
 - イメージを使う側はタグではなく digest で固定する。
 - push した digest には `actions/attest` で build provenance を付け、GHCR に置く。`gh attestation verify oci://ghcr.io/atefandrus/ratatoskr@<digest> --repo AtefAndrus/ratatoskr` で検証できる。
 
