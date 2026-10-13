@@ -13,7 +13,8 @@ permissions: {}
 # (待機を積む queue: max は ci.yml が固定する actionlint 1.7.12 が受け付けない)。
 # Release のタグ名は下の検証で変換の起きない形に限るので、別のコミットの実行どうしで公開タグが重なるのは、
 # 同じ Git タグを別のコミットへ付け替え、前の実行が終わる前に公開し直した場合だけである。この場合は防がない。
-# 同じコミットで置き換えられる実行は、先行の実行が SHA のタグを書いた時点でどのみち失敗する。
+# 同じコミットで置き換えられる実行は、publish job を含むなら先行の実行が SHA のタグを書いた時点でどのみち失敗する。
+# attest job だけの再実行が置き換えられた場合は、もう一度再実行する。
 concurrency:
   group: publish-image-${{ github.sha }}
   cancel-in-progress: false
