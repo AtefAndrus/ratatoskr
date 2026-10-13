@@ -70,7 +70,24 @@ workflow のログで応答が `302` かつ本文がログイン画面へのリ�
 `401` ならトークンが無効か `deploy` 権限が無い。
 Secret を直したあとは、失敗した workflow を GitHub Actions の **Re-run jobs** で再実行すればよく、Release を作り直す必要はない。
 
-## 6. 動作確認
+## 6. GHCR へのイメージ公開
+
+`.github/workflows/publish-image.yml` は、Coolify へのデプロイと同じ Release の公開を契機に Docker イメージをビルドし、`ghcr.io/atefandrus/ratatoskr` へ push する。
+Coolify はリポジトリから自分でビルドするため、このイメージを使わない。
+
+- prerelease の公開では動かない。GitHub Actions の画面から手動実行もできる。
+- タグは Release のタグ名 (`v0.7.0` など) とコミットの完全な SHA の 2 つで、`latest` は付けない。手動実行では完全な SHA だけを付ける。
+- Release のタグ名は `v<major>.<minor>.<patch>` の形でなければ失敗する。
+- push の前に各タグがレジストリに既にあるかを確かめ、あれば push せずに失敗する。GHCR はタグを書き換え不可にできないため、同じタグの上書きをここで防ぐ。存在を確かめられなかった場合 (認証やネットワークの失敗) も push しない。
+- そのため、push まで済んだ実行の再実行や、Release で公開済みのコミットでの手動実行は失敗する。出し直すときは新しいコミットか新しい Release で行う。
+- イメージを使う側はタグではなく digest で固定する。
+- push した digest には `actions/attest` で build provenance を付け、GHCR に置く。`gh attestation verify oci://ghcr.io/atefandrus/ratatoskr@<digest> --repo AtefAndrus/ratatoskr` で検証できる。
+
+個人アカウントの package は初回公開時に private で作られる。
+初回の公開が済んだら、リポジトリ所有者が GitHub のプロフィールの **Packages** から `ratatoskr` を開き、**Package settings** の **Danger Zone** → **Change visibility** で **Public** に切り替える。
+public から private へは戻せない。
+
+## 7. 動作確認
 
 - `/health` が 200 を返し、本文の `receivers[].autopushConnected` が `true` になっている。
 - Coolify のログに `Target configured on receiver` が出ていれば、追加した受信アカウントにも監視対象のフォローが行き渡っている。

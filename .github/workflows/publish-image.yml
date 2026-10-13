@@ -1,0 +1,114 @@
+name: Publish image to GHCR
+
+on:
+  release:
+    types: [published]
+  # Release を作り直さずにイメージだけ出し直したいときに使う。タグは完全な SHA だけになる
+  workflow_dispatch:
+
+permissions: {}
+
+# 存在確認から push までの間に別の実行が同じタグを書くと上書き防止が効かないため、同じコミットの実行を直列にする。
+# 全実行を 1 つの group にしないのは、待機中の実行が後続に置き換えられて別の Release の公開が落ちるため
+# (待機を積む queue: max は ci.yml が固定する actionlint 1.7.12 が受け付けない)。
+# Release のタグ名は下の検証で変換の起きない形に限るので、別のコミットの実行どうしで公開タグが重なるのは、
+# 同じ Git タグを別のコミットへ付け替え、前の実行が終わる前に公開し直した場合だけである。この場合は防がない。
+# 同じコミットで置き換えられる実行は、publish job を含むなら先行の実行が SHA のタグを書いた時点でどのみち失敗する。
+# attest job だけの再実行が置き換えられた場合は、もう一度再実行する。
+concurrency:
+  group: publish-image-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/atefandrus/ratatoskr
+
+jobs:
+  publish:
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # 既定の docker driver (classic image store) は push 後に先頭タグをレジストリから引き直して digest とするため、
+      # その間に別の実行が同じタグを書くと、attest が別のイメージに provenance を付ける。docker-container の builder は push の結果から digest を返す。
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # metadata-action はタグの `/` などを `-` に置き換えるため、別のコミットの Release が同じ公開タグになりうる。
+      # その 2 つは concurrency group が分かれて上書き防止の確認をすり抜けるので、置き換えが起きない形に限る。
+      - name: Validate release tag
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag $TAG is not v<major>.<minor>.<patch>"; exit 1
+          fi
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: metadata
+        with:
+          images: ${{ env.IMAGE }}
+          # latest は付けない。デプロイ側は digest で固定するので、動くタグは誤った取り込みの元になるだけである
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
+            type=sha,format=long,prefix=
+      # GHCR はタグを書き換え不可にできないため、push 前に既存タグを確かめて上書きを防ぐ。
+      # 「存在しない」以外の失敗 (認証やネットワーク) は存在を否定できないので、push せずに落とす。
+      # 末尾一致にしないのは、containerd が巨大な既存 manifest の拒否も「<ref>: not found」で終わる文で返すため。
+      - name: Refuse to overwrite existing tags
+        env:
+          TAGS: ${{ steps.metadata.outputs.tags }}
+        run: |
+          while IFS= read -r ref; do
+            [ -n "$ref" ] || continue
+            if out=$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$ref" 2>&1); then
+              echo "::error::$ref already exists ($out)"; exit 1
+            fi
+            if [ "${out##*$'\n'}" != "ERROR: $ref: not found" ]; then
+              echo "::error::cannot confirm that $ref is absent: $out"; exit 1
+            fi
+            echo "$ref is free"
+          done <<< "$TAGS"
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: push
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          # public リポジトリでは BuildKit の provenance が既定で付くが、provenance は attest job の 1 つにまとめる。
+          # BuildKit 側も付けると push 対象が attestation manifest を含む index になり、同じ来歴が 2 か所に置かれる。
+          provenance: false
+
+  # attest を publish と同じ job に置かないのは、attest だけが失敗したときの再実行が既存タグの確認で止まり、
+  # push 済みのイメージに provenance を付け直せなくなるため。別 job なら Re-run failed jobs で attest だけをやり直せる。
+  attest:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ needs.publish.outputs.digest }}
+          push-to-registry: true
+          # storage record は organization 所有のリポジトリでしか作れず、このリポジトリはユーザー所有である
+          create-storage-record: false
