@@ -32,6 +32,12 @@ export interface RawTextTable {
   pending: string;
 }
 
+/** 本文の整理でたどり終えた位置。時刻が同じ行は id の順に並べる。 */
+export interface RawTextCursor {
+  time: string;
+  id: number;
+}
+
 export const RAW_TEXT_TABLES: readonly RawTextTable[] = [
   {
     table: "internal_graphql_observations",
@@ -75,43 +81,49 @@ export class MaintenanceRepository {
   constructor(private readonly db: Database) {}
 
   /**
-   * id がこの値以下の行はすべて `before` より古い。
-   * 時刻の順と id の順は取得の並行で前後しうるので、新しい側の最小 id から求める。
+   * 時刻と id の組で `after` より後ろの行を、時刻の古い順に最大 `limit` 行たどり、`before` より古いものの本文を落とす。
+   * 観測なら、その観測に属する投稿の生 JSON も落とす。たどった最後の行を次の呼び出しの `after` に使う。
+   * 位置を主キーの値だけで持たないのは、最大の id の行が消えると SQLite が同じ id を使い回し、
+   * 期限前の行の本文を落としたり、期限後の行を飛ばしたりするためである。
    */
-  rawTextUpperId(spec: RawTextTable, before: string): number {
-    // min(id) のままだと SQLite は主キーを先頭から読む最適化を選び、古い行を全件たどる。
-    // 単項の + でそれを外し、時刻の索引の新しい側だけを読ませる。
-    const row = this.db
-      .query(
-        `SELECT coalesce(
-           (SELECT min(+id) FROM ${spec.table} WHERE ${spec.timeColumn} >= $before) - 1,
-           (SELECT max(id) FROM ${spec.table}),
-           0
-         ) AS upperId`,
-      )
-      .get({ before }) as { upperId: number };
-    return row.upperId;
-  }
-
-  /** id が (afterId, untilId] の行の本文を落とす。観測なら、その観測に属する投稿の生 JSON も落とす。 */
-  clearRawTextRange(spec: RawTextTable, afterId: number, untilId: number): number {
+  clearRawTextBatch(
+    spec: RawTextTable,
+    before: string,
+    after: RawTextCursor | null,
+    limit: number,
+  ): { cleared: number; scanned: number; last: RawTextCursor | null } {
     return this.db.transaction(() => {
+      const rows = this.db
+        .query(
+          `SELECT id, ${spec.timeColumn} AS time FROM ${spec.table}
+           WHERE ${spec.timeColumn} < $before AND ${spec.timeColumn} >= $afterTime
+             AND (${spec.timeColumn} > $afterTime OR id > $afterId)
+           ORDER BY ${spec.timeColumn}, id LIMIT $limit`,
+        )
+        .all({
+          before,
+          afterTime: after?.time ?? "",
+          afterId: after?.id ?? 0,
+          limit,
+        }) as RawTextCursor[];
+      if (rows.length === 0) return { cleared: 0, scanned: 0, last: null };
+      const ids = JSON.stringify(rows.map((row) => row.id));
       let cleared = this.db
         .query(
           `UPDATE ${spec.table} SET ${spec.clear}
-           WHERE id > $afterId AND id <= $untilId AND ${spec.pending}`,
+           WHERE id IN (SELECT value FROM json_each($ids)) AND ${spec.pending}`,
         )
-        .run({ afterId, untilId }).changes;
+        .run({ ids }).changes;
       if (spec.table === "internal_graphql_observations") {
         cleared += this.db
           .query(
             `UPDATE internal_graphql_observation_posts SET raw_result_json = NULL
-             WHERE observation_id > $afterId AND observation_id <= $untilId
+             WHERE observation_id IN (SELECT value FROM json_each($ids))
                AND raw_result_json IS NOT NULL`,
           )
-          .run({ afterId, untilId }).changes;
+          .run({ ids }).changes;
       }
-      return cleared;
+      return { cleared, scanned: rows.length, last: rows.at(-1) ?? null };
     })();
   }
 

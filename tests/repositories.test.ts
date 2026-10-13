@@ -241,11 +241,11 @@ describe("observations と保持期間", () => {
         rowsBefore: "2026-09-01T00:00:00.000Z",
         watermarks,
       });
-      // 観測 3 は期限より古いが、id の小さい観測 2 がまだ新しいので、観測 2 が期限を過ぎるまで本文を残す
-      expect(result).toEqual({ rawTextCleared: 2, rowsDeleted: 0 });
+      // 観測 3 は id が観測 2 より大きいが時刻は古いので、観測 2 より先に本文を落とす
+      expect(result).toEqual({ rawTextCleared: 4, rowsDeleted: 0 });
       expect(context.observations.getResponseText(1)?.responseText).toBeNull();
       expect(context.observations.getResponseText(2)?.responseText).toBe('{"data":{}}');
-      expect(context.observations.getResponseText(3)?.responseText).toBe('{"data":{}}');
+      expect(context.observations.getResponseText(3)?.responseText ?? null).toBeNull();
 
       const deleted = await applyRetentionInChunks({
         maintenance: context.maintenance,
@@ -253,8 +253,8 @@ describe("observations と保持期間", () => {
         rowsBefore: "2026-09-03T00:00:30.000Z",
         watermarks,
       });
-      expect(deleted.rawTextCleared).toBe(3);
-      expect(context.observations.getResponseText(3)?.responseText ?? null).toBeNull();
+      expect(deleted.rawTextCleared).toBe(1);
+      expect(context.observations.getResponseText(2)?.responseText ?? null).toBeNull();
       // bun:sqlite の changes は外部キーの連鎖削除分も含むため下限だけを見る
       expect(deleted.rowsDeleted).toBeGreaterThanOrEqual(2);
       expect(context.maintenance.tableCounts()).toMatchObject({

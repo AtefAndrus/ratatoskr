@@ -4,20 +4,24 @@ import {
   EXPIRING_TABLES,
   RAW_TEXT_TABLES,
   type MaintenanceRepository,
+  type RawTextCursor,
   type RetentionResult,
 } from "../db/repositories/maintenance";
 import { logger } from "../utils/logger";
 
 const RETENTION_INTERVAL_MS = 60 * 60_000;
-/** 1 トランザクションで本文を落とす id の幅。観測 1 件に投稿が十数行付くので、これで数万行に収まる。 */
-const RAW_TEXT_ID_SPAN = 1_000;
+/** 1 トランザクションで本文を落とす行数。観測 1 件に投稿が十数行付くので、これで数万行に収まる。 */
+const RAW_TEXT_BATCH_SIZE = 1_000;
 
-/** 本文を落とし終えた id の上限。プロセス内だけに持ち、起動直後の 1 回は先頭から小分けに走査し直す。 */
-export type RawTextWatermarks = Map<string, number>;
+/**
+ * 本文の整理でたどり終えた位置。プロセス内だけに持ち、起動直後の 1 回は先頭から小分けに走査し直す。
+ * 消えた行や使い回された id の範囲は、時刻の索引をたどるので読まない。
+ */
+export type RawTextWatermarks = Map<string, RawTextCursor>;
 
 /**
  * 保持期間の整理を小さなトランザクションに分けて行い、その合間にイベントループへ処理を返す。
- * 2 回目以降の本文の整理は前回の上限から先だけを見る。古い行は本文を落とし済みなので、毎回全行を読み直さない。
+ * 2 回目以降の本文の整理は前回たどり終えた位置から先だけを見る。古い行は本文を落とし済みなので、毎回全行を読み直さない。
  */
 export async function applyRetentionInChunks(input: {
   maintenance: MaintenanceRepository;
@@ -30,15 +34,19 @@ export async function applyRetentionInChunks(input: {
   const yieldToEventLoop = input.yieldToEventLoop ?? (() => delay(0));
   const result: RetentionResult = { rawTextCleared: 0, rowsDeleted: 0 };
   for (const spec of RAW_TEXT_TABLES) {
-    const upperId = input.maintenance.rawTextUpperId(spec, input.rawBefore);
-    let afterId = input.watermarks.get(spec.table) ?? 0;
-    while (afterId < upperId) {
+    for (;;) {
       if (input.signal?.aborted === true) return result;
-      const untilId = Math.min(afterId + RAW_TEXT_ID_SPAN, upperId);
-      result.rawTextCleared += input.maintenance.clearRawTextRange(spec, afterId, untilId);
-      afterId = untilId;
-      input.watermarks.set(spec.table, afterId);
+      const batch = input.maintenance.clearRawTextBatch(
+        spec,
+        input.rawBefore,
+        input.watermarks.get(spec.table) ?? null,
+        RAW_TEXT_BATCH_SIZE,
+      );
+      if (batch.last === null) break;
+      result.rawTextCleared += batch.cleared;
+      input.watermarks.set(spec.table, batch.last);
       await yieldToEventLoop();
+      if (batch.scanned < RAW_TEXT_BATCH_SIZE) break;
     }
   }
   for (const spec of EXPIRING_TABLES) {

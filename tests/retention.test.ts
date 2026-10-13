@@ -4,7 +4,7 @@ import { applyRetentionInChunks, type RawTextWatermarks } from "../src/maintenan
 import { addReceiver, addTarget, createTestContext, type TestContext } from "./helpers/database";
 
 describe("保持期間の整理の分割", () => {
-  test("本文の整理を id の幅ごとに分けて処理を返し、次回は前回の上限から先だけを見る", async () => {
+  test("本文の整理を上限行数ごとに分けて処理を返し、次回は前回たどり終えた位置から先だけを見る", async () => {
     const context = createTestContext();
     try {
       seedObservations(context, 2_500, "2026-09-01T00:00:00.000Z");
@@ -25,7 +25,10 @@ describe("保持期間の整理の分割", () => {
         rawTextCleared: 5_000,
         rowsDeleted: 0,
       });
-      expect(watermarks.get("internal_graphql_observations")).toBe(2_500);
+      expect(watermarks.get("internal_graphql_observations")).toEqual({
+        time: "2026-09-01T00:00:00.000Z",
+        id: 2_500,
+      });
       // 本文の整理 3 回と、表ごとに 1 回ずつの削除
       expect(yields).toBe(3 + 4);
 
@@ -36,6 +39,62 @@ describe("保持期間の整理の分割", () => {
         rowsDeleted: 0,
       });
       expect(yields).toBe(1 + 4);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("使い回された id の行も時刻で判定し、期限前は残して期限後は落とす", async () => {
+    const context = createTestContext();
+    try {
+      seedObservations(context, 3, "2026-09-01T00:00:00.000Z");
+      const watermarks: RawTextWatermarks = new Map();
+      const run = async (rawBefore: string) =>
+        await applyRetentionInChunks({
+          maintenance: context.maintenance,
+          rawBefore,
+          rowsBefore: "2026-08-01T00:00:00.000Z",
+          watermarks,
+          yieldToEventLoop: async () => undefined,
+        });
+      await run("2026-09-02T00:00:00.000Z");
+      // 最大の id の行が消えると、SQLite は次の行に同じ id を使い回す
+      context.db.exec("DELETE FROM internal_graphql_observations");
+      seedObservations(context, 1, "2026-09-03T00:00:00.000Z");
+      expect(context.observations.getResponseText(1)?.responseText).toBe("{}");
+
+      await run("2026-09-02T12:00:00.000Z");
+      expect(context.observations.getResponseText(1)?.responseText).toBe("{}");
+
+      await run("2026-09-04T00:00:00.000Z");
+      expect(context.observations.getResponseText(1)?.responseText ?? null).toBeNull();
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("飛び飛びの id は、あいだの範囲をたどらずに処理する", async () => {
+    const context = createTestContext();
+    try {
+      seedObservations(context, 1, "2026-09-01T00:00:00.000Z");
+      context.db.exec(`
+        PRAGMA foreign_keys = OFF;
+        UPDATE internal_graphql_observation_posts SET observation_id = 10000000;
+        UPDATE internal_graphql_observations SET id = 10000000;
+        PRAGMA foreign_keys = ON;
+      `);
+      let yields = 0;
+      await applyRetentionInChunks({
+        maintenance: context.maintenance,
+        rawBefore: "2026-09-02T00:00:00.000Z",
+        rowsBefore: "2026-08-01T00:00:00.000Z",
+        watermarks: new Map(),
+        yieldToEventLoop: async () => {
+          yields += 1;
+        },
+      });
+      expect(yields).toBe(1 + 4);
+      expect(context.observations.getResponseText(10_000_000)?.responseText ?? null).toBeNull();
     } finally {
       context.db.close();
     }
