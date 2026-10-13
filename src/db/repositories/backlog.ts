@@ -189,6 +189,8 @@ export class BacklogRepository {
     requestedCursor: string;
     bottomCursor: string | null;
     regularPostIds: readonly string[];
+    /** 固定投稿以外の投稿の作成時刻。 */
+    unpinnedPostCreatedAts: ReadonlyArray<string | null>;
     now: string;
   }): void {
     const progress = this.get(input.targetId);
@@ -207,7 +209,16 @@ export class BacklogRepository {
     const cursorCycle =
       input.bottomCursor !== null &&
       (input.bottomCursor === input.requestedCursor || seen.has(input.bottomCursor));
-    const complete = overlap >= 3 || input.bottomCursor === null || cursorCycle;
+    // 履歴の末尾で X は固定投稿だけのページと、数値を 1 ずつ変えた Bottom カーソルを返し続ける。
+    // カーソルの一致では循環を検出できないため、ページの中身で終端を判定する。
+    const timelineExhausted = input.unpinnedPostCreatedAts.length === 0;
+    const newestPostMs = Math.max(
+      ...input.unpinnedPostCreatedAts
+        .map((createdAt) => (createdAt === null ? Number.NaN : new Date(createdAt).getTime()))
+        .filter(Number.isFinite),
+    );
+    const notBeforeReached =
+      Number.isFinite(newestPostMs) && newestPostMs < new Date(progress.notBefore).getTime();
     const reason =
       overlap >= 3
         ? "known_posts_overlap"
@@ -215,7 +226,12 @@ export class BacklogRepository {
           ? "bottom_cursor_missing"
           : cursorCycle
             ? "cursor_cycle"
-            : "page_saved";
+            : timelineExhausted
+              ? "timeline_exhausted"
+              : notBeforeReached
+                ? "not_before_reached"
+                : "page_saved";
+    const complete = reason !== "page_saved";
     this.db
       .query(
         `UPDATE backlog_progress

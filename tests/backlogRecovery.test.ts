@@ -119,6 +119,7 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "cursor-1",
         bottomCursor: "cursor-2",
         regularPostIds: ["known-1", "known-2", "known-3"],
+        unpinnedPostCreatedAts: [null],
         now: "2026-09-03T00:00:05.000Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
@@ -156,6 +157,7 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "first-cursor",
         bottomCursor: "older-cursor",
         regularPostIds: ["known-1", "known-2", "known-3"],
+        unpinnedPostCreatedAts: [null],
         now: "2026-09-03T00:00:03.000Z",
       });
       seedSuccessfulObservation(
@@ -290,6 +292,7 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "cursor-1",
         bottomCursor: "cursor-2",
         regularPostIds: [],
+        unpinnedPostCreatedAts: [null],
         now: "2026-09-03T00:01:01.001Z",
       });
       context.backlog.savePage({
@@ -298,6 +301,7 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "cursor-1",
         bottomCursor: "stale-cursor",
         regularPostIds: [],
+        unpinnedPostCreatedAts: [null],
         now: "2026-09-03T00:01:01.002Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
@@ -418,11 +422,99 @@ describe("停止中投稿の補完", () => {
         requestedCursor: "cursor-1",
         bottomCursor: "cursor-1",
         regularPostIds: [],
+        unpinnedPostCreatedAts: [null],
         now: "2026-09-03T00:00:03.000Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
         state: "complete",
         lastStopReason: "cursor_cycle",
+      });
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("固定投稿だけのページは毎回別のBottomカーソルが付いても完了にする", () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const targetId = addTarget(context, { handle: "example" });
+      context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      setRouteCreatedAt(context.db, targetId, "2026-09-01T00:00:00.000Z");
+      context.backlog.ensure(targetId, "2026-09-02T00:00:00.000Z");
+      context.backlog.startFromLatest(targetId, "end-rWU", "2026-09-03T00:00:00.000Z");
+      context.backlog.acquire(
+        targetId,
+        receiverId,
+        "2026-09-03T00:00:01.000Z",
+        "2026-09-03T00:01:01.000Z",
+      );
+      context.backlog.savePage({
+        targetId,
+        receiverId,
+        requestedCursor: "end-rWU",
+        bottomCursor: "end-rWQ",
+        regularPostIds: [],
+        unpinnedPostCreatedAts: [],
+        now: "2026-09-03T00:00:02.000Z",
+      });
+      expect(context.backlog.get(targetId)).toMatchObject({
+        state: "complete",
+        nextCursor: null,
+        lastStopReason: "timeline_exhausted",
+      });
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("非固定投稿がすべてnotBeforeより古いページで完了し、境界に届くページと時刻不明のページでは続ける", () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const targetId = addTarget(context, { handle: "example" });
+      context.routes.add({ targetId, guildId: "g", channelId: "c" });
+      setRouteCreatedAt(context.db, targetId, "2026-09-01T00:00:00.000Z");
+      context.backlog.ensure(targetId, "2026-09-02T00:00:00.000Z");
+      context.backlog.startFromLatest(targetId, "cursor-1", "2026-09-03T00:00:00.000Z");
+      const savePage = (
+        requestedCursor: string,
+        bottomCursor: string,
+        unpinnedPostCreatedAts: Array<string | null>,
+      ): void => {
+        context.backlog.acquire(
+          targetId,
+          receiverId,
+          "2026-09-03T00:00:01.000Z",
+          "2026-09-03T00:01:01.000Z",
+        );
+        context.backlog.savePage({
+          targetId,
+          receiverId,
+          requestedCursor,
+          bottomCursor,
+          regularPostIds: [],
+          unpinnedPostCreatedAts,
+          now: "2026-09-03T00:00:02.000Z",
+        });
+      };
+
+      savePage("cursor-1", "cursor-2", ["2026-08-31T00:00:00.000Z", "2026-09-01T00:00:00.000Z"]);
+      expect(context.backlog.get(targetId)).toMatchObject({
+        state: "pending",
+        nextCursor: "cursor-2",
+        lastStopReason: "page_saved",
+      });
+
+      savePage("cursor-2", "cursor-3", [null]);
+      expect(context.backlog.get(targetId)).toMatchObject({ state: "pending" });
+
+      savePage("cursor-3", "cursor-4", ["2026-08-31T00:00:00.000Z", null]);
+      expect(context.backlog.get(targetId)).toMatchObject({
+        state: "complete",
+        nextCursor: null,
+        pagesFetched: 3,
+        lastStopReason: "not_before_reached",
       });
     } finally {
       context.db.close();
@@ -487,6 +579,7 @@ describe("永続送信キュー", () => {
             requestedCursor: "cursor-1",
             bottomCursor: "cursor-2",
             regularPostIds: ["1"],
+            unpinnedPostCreatedAts: [null],
             now: "2026-09-03T00:00:03.000Z",
           });
         },
@@ -712,6 +805,7 @@ function page(
     parseError: null,
     posts,
     regularPostIds,
+    unpinnedPostIds: posts.map((value) => value.postId),
     bottomCursor,
   };
 }

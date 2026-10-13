@@ -62,6 +62,7 @@ export interface InternalTimelineFetchResult extends InternalGraphqlResponse {
   parseError: string | null;
   posts: InternalTimelinePost[];
   regularPostIds: string[];
+  unpinnedPostIds: string[];
   bottomCursor: string | null;
 }
 
@@ -117,6 +118,7 @@ export class XInternalGraphqlClient {
     });
     let posts: InternalTimelinePost[] = [];
     let regularPostIds: string[] = [];
+    let unpinnedPostIds: string[] = [];
     let parsedBottomCursor: string | null = null;
     let parseError: string | null = null;
     if (response.error === null && response.responseText !== null) {
@@ -124,12 +126,20 @@ export class XInternalGraphqlClient {
         const page = extractTimelinePage(JSON.parse(response.responseText));
         posts = page.posts;
         regularPostIds = page.regularPostIds;
+        unpinnedPostIds = page.unpinnedPostIds;
         parsedBottomCursor = page.bottomCursor;
       } catch (failure) {
         parseError = errorMessage(failure);
       }
     }
-    return { ...response, parseError, posts, regularPostIds, bottomCursor: parsedBottomCursor };
+    return {
+      ...response,
+      parseError,
+      posts,
+      regularPostIds,
+      unpinnedPostIds,
+      bottomCursor: parsedBottomCursor,
+    };
   }
 
   /** 投稿 1 件を引いて種別を確定する。Web Push では通常投稿と引用を区別できないときに使う。 */
@@ -254,6 +264,8 @@ export function extractTimelinePosts(payload: unknown): InternalTimelinePost[] {
 export interface InternalTimelinePage {
   posts: InternalTimelinePost[];
   regularPostIds: string[];
+  /** regularPostIds と違い会話モジュールも含める。返信だけのページを空とみなして補完を早く止めないため。 */
+  unpinnedPostIds: string[];
   bottomCursor: string | null;
 }
 
@@ -263,6 +275,7 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
   if (instructions === null) throw new Error("応答に正常なタイムライン構造がありません");
   const results: unknown[] = [];
   const regularResults: unknown[] = [];
+  const unpinnedResults: unknown[] = [];
   let bottomCursor: string | null = null;
   let sawBottomCursor = false;
   for (const instruction of instructions) {
@@ -282,6 +295,7 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
       const entryResults: unknown[] = [];
       collectEntryResults(entry.content, entryResults);
       results.push(...entryResults);
+      if (!pinned) unpinnedResults.push(...entryResults);
       if (!pinned && isRegularTimelineEntry(entry)) regularResults.push(...entryResults);
     }
   }
@@ -290,16 +304,21 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
     const post = classifyTweetResult(raw);
     if (post !== null) posts.set(post.postId, post);
   }
-  const regularPostIds = new Set<string>();
-  for (const raw of regularResults) {
-    const post = classifyTweetResult(raw);
-    if (post !== null) regularPostIds.add(post.postId);
-  }
   return {
     posts: [...posts.values()],
-    regularPostIds: [...regularPostIds],
+    regularPostIds: classifiedPostIds(regularResults),
+    unpinnedPostIds: classifiedPostIds(unpinnedResults),
     bottomCursor: sawBottomCursor ? bottomCursor : null,
   };
+}
+
+function classifiedPostIds(results: readonly unknown[]): string[] {
+  const postIds = new Set<string>();
+  for (const raw of results) {
+    const post = classifyTweetResult(raw);
+    if (post !== null) postIds.add(post.postId);
+  }
+  return [...postIds];
 }
 
 /** TweetResultByRestId の応答 (`data.tweetResult.result`) から投稿 1 件を取り出す。 */

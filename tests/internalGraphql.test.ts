@@ -87,7 +87,7 @@ describe("X 内部 GraphQL", () => {
     expect(posts.every((post) => post.createdAt === "2026-09-03T00:00:00.000Z")).toBe(true);
   });
 
-  test("Bottomカーソルを抽出し、固定投稿だけを重なり判定から外す", () => {
+  test("Bottomカーソルを抽出し、固定投稿を重なり判定と非固定投稿から外す", () => {
     const payload = {
       data: {
         user: {
@@ -129,6 +129,7 @@ describe("X 内部 GraphQL", () => {
     expect(extractTimelinePage(payload)).toMatchObject({
       bottomCursor: "cursor-2",
       regularPostIds: ["2"],
+      unpinnedPostIds: ["2", "1", "0"],
     });
     expect(extractTimelinePage(payload).posts.map((post) => post.postId)).toEqual([
       "9",
