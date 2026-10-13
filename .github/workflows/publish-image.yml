@@ -8,9 +8,11 @@ on:
 
 permissions: {}
 
-# 存在確認から push までの間に別の実行が同じタグを書くと上書き防止が効かないため、実行を直列にする
+# 存在確認から push までの間に別の実行が同じタグを書くと上書き防止が効かないため、同じコミットの実行を直列にする。
+# 全実行を 1 つの group にしないのは、待機中の実行が後続に置き換えられて別の Release の公開が落ちるため。
+# 同じコミットで置き換えられる実行は、先行の実行が SHA のタグを書いた時点でどのみち失敗する。
 concurrency:
-  group: publish-image
+  group: publish-image-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -44,6 +46,7 @@ jobs:
             type=sha,format=long,prefix=
       # GHCR はタグを書き換え不可にできないため、push 前に既存タグを確かめて上書きを防ぐ。
       # 「存在しない」以外の失敗 (認証やネットワーク) は存在を否定できないので、push せずに落とす。
+      # 末尾一致にしないのは、containerd が巨大な既存 manifest の拒否も「<ref>: not found」で終わる文で返すため。
       - name: Refuse to overwrite existing tags
         env:
           TAGS: ${{ steps.metadata.outputs.tags }}
@@ -53,10 +56,10 @@ jobs:
             if out=$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "$ref" 2>&1); then
               echo "::error::$ref already exists ($out)"; exit 1
             fi
-            case "$out" in
-              *"$ref: not found") echo "$ref is free" ;;
-              *) echo "::error::cannot confirm that $ref is absent: $out"; exit 1 ;;
-            esac
+            if [ "${out##*$'\n'}" != "ERROR: $ref: not found" ]; then
+              echo "::error::cannot confirm that $ref is absent: $out"; exit 1
+            fi
+            echo "$ref is free"
           done <<< "$TAGS"
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: push
@@ -65,6 +68,9 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          # public リポジトリでは BuildKit の provenance が既定で付くが、既定の docker driver は classic image store で
+          # attestation を扱えずビルドが失敗する。provenance は次の actions/attest で付ける。
+          provenance: false
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
