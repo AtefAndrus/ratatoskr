@@ -87,7 +87,7 @@ describe("X 内部 GraphQL", () => {
     expect(posts.every((post) => post.createdAt === "2026-09-03T00:00:00.000Z")).toBe(true);
   });
 
-  test("Bottomカーソルを抽出し、固定投稿を重なり判定と非固定投稿から外す", () => {
+  test("Bottomカーソルを抽出し、固定投稿以外の投稿の時刻を読めない投稿も含めて返す", () => {
     const payload = {
       data: {
         user: {
@@ -103,6 +103,16 @@ describe("X 内部 GraphQL", () => {
                     type: "TimelineAddEntries",
                     entries: [
                       entry("tweet-2", tweet("2", {})),
+                      entry("tweet-deleted", {
+                        tweet_results: { result: { __typename: "TweetTombstone" } },
+                      }),
+                      {
+                        entryId: "who-to-follow-1",
+                        content: {
+                          entryType: "TimelineTimelineModule",
+                          items: [{ item: { itemContent: { user_results: { result: {} } } } }],
+                        },
+                      },
                       {
                         entryId: "conversation-1",
                         content: {
@@ -129,7 +139,12 @@ describe("X 内部 GraphQL", () => {
     expect(extractTimelinePage(payload)).toMatchObject({
       bottomCursor: "cursor-2",
       regularPostIds: ["2"],
-      unpinnedPostIds: ["2", "1", "0"],
+      unpinnedPostCreatedAts: [
+        "2026-09-03T00:00:00.000Z",
+        null,
+        "2026-09-03T00:00:00.000Z",
+        "2026-09-03T00:00:00.000Z",
+      ],
     });
     expect(extractTimelinePage(payload).posts.map((post) => post.postId)).toEqual([
       "9",

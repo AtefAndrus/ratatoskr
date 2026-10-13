@@ -235,16 +235,13 @@ export class InternalPollCollector {
           result.completedAt,
         );
       } else {
-        const unpinnedPostIds = new Set(result.unpinnedPostIds);
         this.deps.backlog.savePage({
           targetId: target.id,
           receiverId: this.deps.receiverId,
           requestedCursor: cursor,
           bottomCursor: result.bottomCursor,
           regularPostIds: result.regularPostIds,
-          unpinnedPostCreatedAts: result.posts
-            .filter((post) => unpinnedPostIds.has(post.postId))
-            .map((post) => post.createdAt),
+          unpinnedPostCreatedAts: result.unpinnedPostCreatedAts,
           now: result.completedAt,
         });
       }

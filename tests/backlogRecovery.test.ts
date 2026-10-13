@@ -468,7 +468,7 @@ describe("停止中投稿の補完", () => {
     }
   });
 
-  test("非固定投稿がすべてnotBeforeより古いページで完了し、境界に届くページと時刻不明のページでは続ける", () => {
+  test("非固定投稿がすべてnotBeforeより古いページで完了し、境界に届くページと時刻不明の投稿を含むページでは続ける", () => {
     const context = createTestContext();
     try {
       const receiverId = addReceiver(context);
@@ -509,11 +509,14 @@ describe("停止中投稿の補完", () => {
       savePage("cursor-2", "cursor-3", [null]);
       expect(context.backlog.get(targetId)).toMatchObject({ state: "pending" });
 
-      savePage("cursor-3", "cursor-4", ["2026-08-31T00:00:00.000Z", null]);
+      savePage("cursor-3", "cursor-4", ["2026-08-30T00:00:00.000Z", null]);
+      expect(context.backlog.get(targetId)).toMatchObject({ state: "pending" });
+
+      savePage("cursor-4", "cursor-5", ["2026-08-30T00:00:00.000Z", "2026-08-31T00:00:00.000Z"]);
       expect(context.backlog.get(targetId)).toMatchObject({
         state: "complete",
         nextCursor: null,
-        pagesFetched: 3,
+        pagesFetched: 4,
         lastStopReason: "not_before_reached",
       });
     } finally {
@@ -805,7 +808,7 @@ function page(
     parseError: null,
     posts,
     regularPostIds,
-    unpinnedPostIds: posts.map((value) => value.postId),
+    unpinnedPostCreatedAts: posts.map((value) => value.createdAt),
     bottomCursor,
   };
 }

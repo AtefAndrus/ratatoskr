@@ -189,7 +189,7 @@ export class BacklogRepository {
     requestedCursor: string;
     bottomCursor: string | null;
     regularPostIds: readonly string[];
-    /** 固定投稿以外の投稿の作成時刻。 */
+    /** 固定投稿以外のエントリにある投稿の作成時刻。読めない投稿は null。 */
     unpinnedPostCreatedAts: ReadonlyArray<string | null>;
     now: string;
   }): void {
@@ -212,13 +212,14 @@ export class BacklogRepository {
     // 履歴の末尾で X は固定投稿だけのページと、数値を 1 ずつ変えた Bottom カーソルを返し続ける。
     // カーソルの一致では循環を検出できないため、ページの中身で終端を判定する。
     const timelineExhausted = input.unpinnedPostCreatedAts.length === 0;
-    const newestPostMs = Math.max(
-      ...input.unpinnedPostCreatedAts
-        .map((createdAt) => (createdAt === null ? Number.NaN : new Date(createdAt).getTime()))
-        .filter(Number.isFinite),
-    );
+    const notBeforeMs = new Date(progress.notBefore).getTime();
+    // 時刻の読めない投稿が 1 件でもあれば古いと決めない。それが停止中の投稿かもしれないため。
     const notBeforeReached =
-      Number.isFinite(newestPostMs) && newestPostMs < new Date(progress.notBefore).getTime();
+      !timelineExhausted &&
+      input.unpinnedPostCreatedAts.every((createdAt) => {
+        const createdAtMs = createdAt === null ? Number.NaN : new Date(createdAt).getTime();
+        return Number.isFinite(createdAtMs) && createdAtMs < notBeforeMs;
+      });
     const reason =
       overlap >= 3
         ? "known_posts_overlap"

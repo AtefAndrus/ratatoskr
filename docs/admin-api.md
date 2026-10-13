@@ -82,6 +82,6 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 | 内部ポーリングの周回が間に合っているか | `/admin/observations` を `target` で絞り、`receiverLabel` ごとに `fetchedAt` の差を見る | 間隔は対象ごとに変わる。新着があれば約 60 秒、無風が続くと 90/120/180 秒、失敗すると 30/60/120/300 秒 (最初の失敗はむしろ短くなる)。これに ±10% のジッタ、受信内の待ち行列、rate limit による間隔調整が乗る。全体の件数から平均を出しても個別の間隔は復元できない |
 | 内部 GraphQL の生応答がどれだけ容量を食っているか | `/admin/observations/<id>` の `responseText` の長さ と `/admin/metrics` の `tables` | 1 観測あたりのバイト数 × 日次の観測数 × `RAW_RETENTION_DAYS`。`RAW_RETENTION_DAYS` は他に投稿の `raw_result_json`、AutoPush の生フレームと暗号文、`external_exchanges` の応答本文も落とすので、この式で出るのは内部 GraphQL 応答本文ぶんだけ |
 | DB 全体がどれだけ増えるか | `/admin/metrics` の `dbBytes` を時間をおいて 2 回 | `dbBytes` は DB 本体と WAL と SHM の合計なので、再起動を挟むと WAL のぶん減ることがある。`delivery_claims` は重複排除の根拠なので保持期間では消さず、長期では増え続ける (経路を削除すれば `ON DELETE CASCADE` で一緒に消える)。全体が定常値に収束するとは限らない |
-| どちらの経路が先に投稿を拾ったか | `/admin/deliveries` の `status` と `source` | `sent` の `source` は配信権 (claim) を先に取った側。後から同じ投稿を見つけた側は `skipped_duplicate` になる。もう一方が取りこぼしたことを意味しない。内部 GraphQL は受信アカウントごとに初めて見た投稿だけを記録し、同じ投稿を毎周回取り直しても行は増えない |
+| どちらの経路が先に投稿を拾ったか | `/admin/deliveries` の `status` と `source` | `sent` の `source` は配信権 (claim) を先に取った側。後から同じ投稿を見つけた側は `skipped_duplicate` になる。もう一方が取りこぼしたことを意味しない。内部 GraphQL の `skipped_duplicate` は受信アカウントごとに初めて見た投稿でだけ記録し、同じ受信アカウントが同じ投稿を毎周回取り直しても増えない。`sent` と `failed` は再取得時の送信でも記録する |
 
 `/admin/observations` と `/admin/exchanges` は `limit` の既定が 50 なので、分布を見るときは `limit=1000` まで上げる。

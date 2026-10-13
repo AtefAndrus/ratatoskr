@@ -62,7 +62,7 @@ export interface InternalTimelineFetchResult extends InternalGraphqlResponse {
   parseError: string | null;
   posts: InternalTimelinePost[];
   regularPostIds: string[];
-  unpinnedPostIds: string[];
+  unpinnedPostCreatedAts: Array<string | null>;
   bottomCursor: string | null;
 }
 
@@ -118,7 +118,7 @@ export class XInternalGraphqlClient {
     });
     let posts: InternalTimelinePost[] = [];
     let regularPostIds: string[] = [];
-    let unpinnedPostIds: string[] = [];
+    let unpinnedPostCreatedAts: Array<string | null> = [];
     let parsedBottomCursor: string | null = null;
     let parseError: string | null = null;
     if (response.error === null && response.responseText !== null) {
@@ -126,7 +126,7 @@ export class XInternalGraphqlClient {
         const page = extractTimelinePage(JSON.parse(response.responseText));
         posts = page.posts;
         regularPostIds = page.regularPostIds;
-        unpinnedPostIds = page.unpinnedPostIds;
+        unpinnedPostCreatedAts = page.unpinnedPostCreatedAts;
         parsedBottomCursor = page.bottomCursor;
       } catch (failure) {
         parseError = errorMessage(failure);
@@ -137,7 +137,7 @@ export class XInternalGraphqlClient {
       parseError,
       posts,
       regularPostIds,
-      unpinnedPostIds,
+      unpinnedPostCreatedAts,
       bottomCursor: parsedBottomCursor,
     };
   }
@@ -264,8 +264,13 @@ export function extractTimelinePosts(payload: unknown): InternalTimelinePost[] {
 export interface InternalTimelinePage {
   posts: InternalTimelinePost[];
   regularPostIds: string[];
-  /** regularPostIds と違い会話モジュールも含める。返信だけのページを空とみなして補完を早く止めないため。 */
-  unpinnedPostIds: string[];
+  /**
+   * 固定投稿以外のエントリにある投稿の作成時刻。削除済みなどで読めない投稿は null にする。
+   * regularPostIds と違い会話モジュールも含め、読めない投稿も落とさない。
+   * どちらも落とすと、返信や削除済み投稿だけのページを空とみなして補完を早く止めるため。
+   * おすすめユーザーのように投稿を持たないエントリは数えない。null にすると、それが載るページを古いと判定できなくなる。
+   */
+  unpinnedPostCreatedAts: Array<string | null>;
   bottomCursor: string | null;
 }
 
@@ -275,7 +280,7 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
   if (instructions === null) throw new Error("応答に正常なタイムライン構造がありません");
   const results: unknown[] = [];
   const regularResults: unknown[] = [];
-  const unpinnedResults: unknown[] = [];
+  const unpinnedPostCreatedAts: Array<string | null> = [];
   let bottomCursor: string | null = null;
   let sawBottomCursor = false;
   for (const instruction of instructions) {
@@ -295,7 +300,11 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
       const entryResults: unknown[] = [];
       collectEntryResults(entry.content, entryResults);
       results.push(...entryResults);
-      if (!pinned) unpinnedResults.push(...entryResults);
+      if (!pinned) {
+        for (const raw of entryResults) {
+          unpinnedPostCreatedAts.push(classifyTweetResult(raw)?.createdAt ?? null);
+        }
+      }
       if (!pinned && isRegularTimelineEntry(entry)) regularResults.push(...entryResults);
     }
   }
@@ -304,21 +313,17 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
     const post = classifyTweetResult(raw);
     if (post !== null) posts.set(post.postId, post);
   }
+  const regularPostIds = new Set<string>();
+  for (const raw of regularResults) {
+    const post = classifyTweetResult(raw);
+    if (post !== null) regularPostIds.add(post.postId);
+  }
   return {
     posts: [...posts.values()],
-    regularPostIds: classifiedPostIds(regularResults),
-    unpinnedPostIds: classifiedPostIds(unpinnedResults),
+    regularPostIds: [...regularPostIds],
+    unpinnedPostCreatedAts,
     bottomCursor: sawBottomCursor ? bottomCursor : null,
   };
-}
-
-function classifiedPostIds(results: readonly unknown[]): string[] {
-  const postIds = new Set<string>();
-  for (const raw of results) {
-    const post = classifyTweetResult(raw);
-    if (post !== null) postIds.add(post.postId);
-  }
-  return [...postIds];
 }
 
 /** TweetResultByRestId の応答 (`data.tweetResult.result`) から投稿 1 件を取り出す。 */
