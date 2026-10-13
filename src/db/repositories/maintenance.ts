@@ -84,7 +84,9 @@ export class MaintenanceRepository {
    * 時刻と id の組で `after` より後ろの行を、時刻の古い順に最大 `limit` 行たどり、`before` より古いものの本文を落とす。
    * 観測なら、その観測に属する投稿の生 JSON も落とす。たどった最後の行を次の呼び出しの `after` に使う。
    * 位置を主キーの値だけで持たないのは、最大の id の行が消えると SQLite が同じ id を使い回し、
-   * 期限前の行の本文を落としたり、期限後の行を飛ばしたりするためである。
+   * 期限後の行を飛ばすためである。
+   * たどり終えた位置より前の時刻で後から入った行は、行ごと消えるまで本文が残る。
+   * 時刻は取得や受信の時点の時計で付けるので、時計を 1 日近く巻き戻さない限り起きない。
    */
   clearRawTextBatch(
     spec: RawTextTable,
@@ -93,12 +95,22 @@ export class MaintenanceRepository {
     limit: number,
   ): { cleared: number; scanned: number; last: RawTextCursor | null } {
     return this.db.transaction(() => {
+      // 同じ時刻の続きと、それより後の時刻を分けて引く。1 つの条件にまとめると、SQLite は時刻でしか索引を引けず、
+      // 同じ時刻の処理済みの行を毎回たどり直す。
       const rows = this.db
         .query(
-          `SELECT id, ${spec.timeColumn} AS time FROM ${spec.table}
-           WHERE ${spec.timeColumn} < $before AND ${spec.timeColumn} >= $afterTime
-             AND (${spec.timeColumn} > $afterTime OR id > $afterId)
-           ORDER BY ${spec.timeColumn}, id LIMIT $limit`,
+          `SELECT id, time FROM (
+             SELECT id, ${spec.timeColumn} AS time FROM ${spec.table}
+             WHERE ${spec.timeColumn} = $afterTime AND id > $afterId AND $afterTime < $before
+             ORDER BY id LIMIT $limit
+           )
+           UNION ALL
+           SELECT id, time FROM (
+             SELECT id, ${spec.timeColumn} AS time FROM ${spec.table}
+             WHERE ${spec.timeColumn} > $afterTime AND ${spec.timeColumn} < $before
+             ORDER BY ${spec.timeColumn}, id LIMIT $limit
+           )
+           ORDER BY time, id LIMIT $limit`,
         )
         .all({
           before,

@@ -100,6 +100,43 @@ describe("保持期間の整理の分割", () => {
     }
   });
 
+  test("既定ではトランザクションの合間にタイマーへ処理を返す", async () => {
+    const context = createTestContext();
+    try {
+      seedObservations(context, 2_500, "2026-09-01T00:00:00.000Z");
+      const events: string[] = [];
+      setTimeout(() => events.push("timer"), 0);
+      await applyRetentionInChunks({
+        maintenance: context.maintenance,
+        rawBefore: "2026-09-02T00:00:00.000Z",
+        rowsBefore: "2026-08-01T00:00:00.000Z",
+        watermarks: new Map(),
+      });
+      events.push("retention done");
+      expect(events).toEqual(["timer", "retention done"]);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("同じ時刻の行が上限行数より多くても、続きから取りこぼさずにたどる", async () => {
+    const context = createTestContext();
+    try {
+      seedObservations(context, 2_500, "2026-09-01T00:00:00.000Z");
+      seedObservations(context, 5, "2026-09-01T00:00:01.000Z");
+      const result = await applyRetentionInChunks({
+        maintenance: context.maintenance,
+        rawBefore: "2026-09-02T00:00:00.000Z",
+        rowsBefore: "2026-08-01T00:00:00.000Z",
+        watermarks: new Map(),
+        yieldToEventLoop: async () => undefined,
+      });
+      expect(result.rawTextCleared).toBe(2 * 2_505);
+    } finally {
+      context.db.close();
+    }
+  });
+
   test("期限切れの行を表ごとの上限件数ずつ消し、停止の合図で途中から抜ける", async () => {
     const context = createTestContext();
     try {
