@@ -62,6 +62,8 @@ export interface InternalTimelineFetchResult extends InternalGraphqlResponse {
   parseError: string | null;
   posts: InternalTimelinePost[];
   regularPostIds: string[];
+  unpinnedPostIds: string[];
+  hasUnknownEntries: boolean;
   bottomCursor: string | null;
 }
 
@@ -117,6 +119,8 @@ export class XInternalGraphqlClient {
     });
     let posts: InternalTimelinePost[] = [];
     let regularPostIds: string[] = [];
+    let unpinnedPostIds: string[] = [];
+    let hasUnknownEntries = true;
     let parsedBottomCursor: string | null = null;
     let parseError: string | null = null;
     if (response.error === null && response.responseText !== null) {
@@ -124,12 +128,22 @@ export class XInternalGraphqlClient {
         const page = extractTimelinePage(JSON.parse(response.responseText));
         posts = page.posts;
         regularPostIds = page.regularPostIds;
+        unpinnedPostIds = page.unpinnedPostIds;
+        hasUnknownEntries = page.hasUnknownEntries;
         parsedBottomCursor = page.bottomCursor;
       } catch (failure) {
         parseError = errorMessage(failure);
       }
     }
-    return { ...response, parseError, posts, regularPostIds, bottomCursor: parsedBottomCursor };
+    return {
+      ...response,
+      parseError,
+      posts,
+      regularPostIds,
+      unpinnedPostIds,
+      hasUnknownEntries,
+      bottomCursor: parsedBottomCursor,
+    };
   }
 
   /** 投稿 1 件を引いて種別を確定する。Web Push では通常投稿と引用を区別できないときに使う。 */
@@ -254,6 +268,13 @@ export function extractTimelinePosts(payload: unknown): InternalTimelinePost[] {
 export interface InternalTimelinePage {
   posts: InternalTimelinePost[];
   regularPostIds: string[];
+  /**
+   * 固定投稿以外の投稿枠の投稿 ID。本文ではなく entryId (`tweet-<id>`、`...-tweet-<id>`) から取る。
+   * 本文から取ると、削除済みや閲覧不可の投稿の表し方が変わるたびに枠を数え落とし、補完を早く止めるため。
+   */
+  unpinnedPostIds: string[];
+  /** 投稿枠ともカーソルとも投稿を持たないモジュールとも判別できないエントリや命令があった。 */
+  hasUnknownEntries: boolean;
   bottomCursor: string | null;
 }
 
@@ -263,11 +284,13 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
   if (instructions === null) throw new Error("応答に正常なタイムライン構造がありません");
   const results: unknown[] = [];
   const regularResults: unknown[] = [];
+  const slots: EntrySlots = { postIds: new Set(), hasUnknown: false };
   let bottomCursor: string | null = null;
   let sawBottomCursor = false;
   for (const instruction of instructions) {
     if (!isObject(instruction)) continue;
     const pinned = instruction.type === "TimelinePinEntry";
+    if (!pinned) collectInstructionSlots(instruction, slots);
     const entries: unknown[] = [];
     if (instruction.entry !== undefined) entries.push(instruction.entry);
     if (Array.isArray(instruction.entries)) entries.push(...instruction.entries);
@@ -298,8 +321,52 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
   return {
     posts: [...posts.values()],
     regularPostIds: [...regularPostIds],
+    unpinnedPostIds: [...slots.postIds],
+    hasUnknownEntries: slots.hasUnknown,
     bottomCursor: sawBottomCursor ? bottomCursor : null,
   };
+}
+
+interface EntrySlots {
+  postIds: Set<string>;
+  hasUnknown: boolean;
+}
+
+const POST_SLOT_ENTRY_ID = /(?:^|-)tweet-(\d+)$/;
+
+function collectInstructionSlots(instruction: Record<string, unknown>, slots: EntrySlots): void {
+  for (const [key, value] of Object.entries(instruction)) {
+    if (key === "type") continue;
+    if (key === "entries" && Array.isArray(value)) {
+      for (const entry of value) collectEntrySlots(entry, slots);
+    } else if (key === "entry") {
+      collectEntrySlots(value, slots);
+    } else if (key === "moduleItems" && Array.isArray(value)) {
+      for (const item of value) collectEntrySlots(item, slots);
+    } else if (key !== "moduleEntryId") {
+      slots.hasUnknown = true;
+    }
+  }
+}
+
+function collectEntrySlots(entry: unknown, slots: EntrySlots): void {
+  if (!isObject(entry) || typeof entry.entryId !== "string") {
+    slots.hasUnknown = true;
+    return;
+  }
+  const entryId = entry.entryId;
+  if (entryId.startsWith("cursor-") || entryId.startsWith("who-to-follow-")) return;
+  const postSlot = POST_SLOT_ENTRY_ID.exec(entryId);
+  if (postSlot !== null) {
+    slots.postIds.add(postSlot[1]!);
+    return;
+  }
+  const items = isObject(entry.content) ? entry.content.items : undefined;
+  if (Array.isArray(items)) {
+    for (const item of items) collectEntrySlots(item, slots);
+    return;
+  }
+  slots.hasUnknown = true;
 }
 
 /** TweetResultByRestId の応答 (`data.tweetResult.result`) から投稿 1 件を取り出す。 */

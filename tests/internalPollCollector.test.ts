@@ -69,6 +69,81 @@ describe("内部 GraphQL からの Discord 通知", () => {
     }
   });
 
+  test("同じ受信の再観測は重複を記録せず、別受信の初出と未投入の再観測は従来どおり扱う", async () => {
+    const context = createTestContext();
+    try {
+      const receiverA = addReceiver(context, "a");
+      const receiverB = addReceiver(context, "b");
+      const target = addTarget(context, { userId: "42", handle: "example" });
+      context.routes.add({ targetId: target, guildId: "g", channelId: "c" });
+      context.db
+        .query("UPDATE routes SET created_at = $createdAt WHERE target_id = $targetId")
+        .run({ targetId: target, createdAt: "2026-09-01T00:00:00.000Z" });
+      const sender = createRecordingSender();
+      const delivery = new DeliveryService(context.routes, context.deliveries, sender);
+      const observe = (receiverId: number, postIds: string[]) =>
+        context.observations.recordObservation(
+          {
+            receiverId,
+            targetId: target,
+            fetchedAt: "2026-09-03T00:00:00.000Z",
+            completedAt: "2026-09-03T00:00:00.100Z",
+            queryId: "q",
+            endpoint: "https://x.com/i/api/graphql/q/UserTweetsAndReplies",
+            variablesJson: "{}",
+            featuresJson: "{}",
+            transactionId: null,
+            responseStatus: 200,
+            responseText: null,
+            rateLimitLimit: null,
+            rateLimitRemaining: null,
+            rateLimitResetAt: null,
+            error: null,
+            parseError: null,
+          },
+          postIds.map((postId) => ({
+            postId,
+            createdAt: "2026-09-02T00:00:00.000Z",
+            authorUserId: "42",
+            authorHandle: "example",
+            typesJson: '["original"]',
+            referencedPostIdsJson: "[]",
+            referencedAuthorHandle: null,
+            mediaTypesJson: "[]",
+            rawResultJson: "{}",
+            isTargetAuthor: 1,
+          })),
+        );
+      const deliverObserved = async (receiverId: number, postIds: string[]) =>
+        await deliverNewInternalPosts({
+          delivery,
+          target: { id: target, handle: "example" },
+          posts: observe(receiverId, postIds).targetPosts,
+          attemptedAt: "2026-09-03T00:00:01.000Z",
+        });
+      const skippedRows = () => context.deliveries.listRecent(100, "skipped_duplicate").length;
+
+      await deliverObserved(receiverA, ["1"]);
+      expect(sender.sent).toEqual(["c:https://x.com/example/status/1"]);
+
+      expect(await deliverObserved(receiverA, ["1"])).toMatchObject({ sent: 0, skipped: 1 });
+      expect(skippedRows()).toBe(0);
+
+      await deliverObserved(receiverB, ["1"]);
+      expect(skippedRows()).toBe(1);
+
+      observe(receiverA, ["2"]);
+      await deliverObserved(receiverA, ["1", "2"]);
+      expect(sender.sent).toEqual([
+        "c:https://x.com/example/status/1",
+        "c:https://x.com/example/status/2",
+      ]);
+      expect(skippedRows()).toBe(1);
+    } finally {
+      context.db.close();
+    }
+  });
+
   test("収集ループは DB の監視対象を読み直し、観測を保存して新規投稿を配信する", async () => {
     const context = createTestContext();
     try {
@@ -104,6 +179,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
             error: null,
             parseError: null,
             regularPostIds: ["500"],
+            unpinnedPostIds: ["500"],
+            hasUnknownEntries: false,
             bottomCursor: null,
             posts: [
               {
@@ -208,6 +285,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
         requestedCursor: "cursor-a",
         bottomCursor: null,
         regularPostIds: [],
+        unpinnedPostTimesMs: [],
+        hasUnknownEntries: false,
         now: "2026-09-05T00:00:02.000Z",
       });
 
@@ -256,6 +335,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
             error: null,
             parseError: null,
             regularPostIds: [],
+            unpinnedPostIds: [],
+            hasUnknownEntries: false,
             bottomCursor: null,
             posts: [],
           };
@@ -316,6 +397,8 @@ describe("内部 GraphQL からの Discord 通知", () => {
             error: null,
             parseError: null,
             regularPostIds: [],
+            unpinnedPostIds: [],
+            hasUnknownEntries: false,
             bottomCursor: null,
             posts: [],
           };
@@ -360,6 +443,7 @@ function createPost(
     referencedPostIdsJson: JSON.stringify(referencedPostIds),
     referencedAuthorHandle,
     mediaTypesJson: mediaTypes === null ? null : JSON.stringify(mediaTypes),
+    isNew: true,
   };
 }
 
@@ -380,6 +464,8 @@ function emptyTimelinePage(bottomCursor: string): InternalTimelineFetchResult {
     error: null,
     parseError: null,
     regularPostIds: [],
+    unpinnedPostIds: [],
+    hasUnknownEntries: false,
     bottomCursor,
     posts: [],
   };

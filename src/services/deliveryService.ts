@@ -57,6 +57,11 @@ export interface DeliverablePost {
   createdAt?: string | null;
   kinds: PostKindsSource;
   mediaTypes: MediaTypesSource;
+  /**
+   * 同じ取得経路で既に見た投稿。観測の保存後かつキュー投入前の停止で落とさないよう投入は毎回試すが、
+   * 重複と除外の記録は初出時だけに絞る。毎周回記録すると配信履歴が取得回数に比例して膨らむため。
+   */
+  reobserved?: boolean;
 }
 
 interface EnqueuedPost {
@@ -67,6 +72,7 @@ interface EnqueuedPost {
 
 interface PreparedPost {
   postId: string;
+  reobserved: boolean;
   queueInputs: NewQueuedDelivery[];
   result: DeliveryResult;
 }
@@ -139,15 +145,17 @@ export class DeliveryService {
           if (queueId !== null && queueId !== undefined) {
             queuedRoutes.push({ id: queueId, routeId: input.routeId });
           } else {
-            this.deliveries.record({
-              source: input.source,
-              sourceRecordId: input.sourceRecordId,
-              routeId: input.routeId,
-              attemptedAt,
-              status: "skipped_duplicate",
-            });
             post.result.skipped += 1;
-            skipped += 1;
+            if (!post.reobserved) {
+              this.deliveries.record({
+                source: input.source,
+                sourceRecordId: input.sourceRecordId,
+                routeId: input.routeId,
+                attemptedAt,
+                status: "skipped_duplicate",
+              });
+              skipped += 1;
+            }
           }
           queueIndex += 1;
         }
@@ -179,18 +187,22 @@ export class DeliveryService {
     const result: DeliveryResult = { sent: 0, failed: 0, skipped: 0, filtered: 0 };
     const kinds = new KindsResolver(post.kinds);
     const media = new MediaResolver(post.mediaTypes);
+    const reobserved = post.reobserved === true;
+    const increment = (name: string): void => {
+      if (!reobserved) metrics.increment(name);
+    };
     const queueInputs: NewQueuedDelivery[] = [];
     for (const route of routes) {
       // 種別で落ちる経路のためにメディアを引かない。取得は種別の判定より後に置く。
       if (!(await kinds.isAllowed(route.kinds))) {
-        metrics.increment("delivery.filtered");
+        increment("delivery.filtered");
         result.filtered += 1;
         continue;
       }
       if (!(await media.isAllowed(route.mediaFilter))) {
-        metrics.increment("delivery.filtered");
-        metrics.increment("delivery.filtered_media");
-        if ((await media.resolve()) === null) metrics.increment("delivery.media_unknown");
+        increment("delivery.filtered");
+        increment("delivery.filtered_media");
+        if ((await media.resolve()) === null) increment("delivery.media_unknown");
         result.filtered += 1;
         continue;
       }
@@ -218,7 +230,7 @@ export class DeliveryService {
         queuedAt: attemptedAt,
       });
     }
-    return { postId: post.postId, queueInputs, result };
+    return { postId: post.postId, reobserved, queueInputs, result };
   }
 
   async drain(includeFailed = true): Promise<void> {

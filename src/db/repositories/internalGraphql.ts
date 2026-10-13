@@ -42,6 +42,8 @@ export interface NewTargetPost {
   referencedPostIdsJson: string;
   referencedAuthorHandle: string | null;
   mediaTypesJson: string | null;
+  /** 同じ受信アカウントがこの対象の取得で初めて見た投稿か。 */
+  isNew: boolean;
 }
 
 export interface ObservationView {
@@ -153,6 +155,7 @@ export class InternalGraphqlRepository {
             referencedPostIdsJson: post.referencedPostIdsJson,
             referencedAuthorHandle: post.referencedAuthorHandle,
             mediaTypesJson: post.mediaTypesJson,
+            isNew: isNew === 1,
           };
           targetPosts.push(targetPost);
           if (isNew === 1) newTargetPosts.push(targetPost);

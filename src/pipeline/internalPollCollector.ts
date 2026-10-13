@@ -5,7 +5,11 @@ import type { InternalGraphqlRepository, NewTargetPost } from "../db/repositorie
 import type { TargetRecord, TargetRepository } from "../db/repositories/targets";
 import { mediaTypesFromJson } from "../mediaFilter";
 import { kindsFromTypesJson } from "../postKinds";
-import type { DeliveryResult, DeliveryService } from "../services/deliveryService";
+import {
+  type DeliveryResult,
+  type DeliveryService,
+  xSnowflakeTimestampMs,
+} from "../services/deliveryService";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
 import { AdaptivePollScheduler, type PollCompletion } from "../x/adaptivePollScheduler";
@@ -241,6 +245,8 @@ export class InternalPollCollector {
           requestedCursor: cursor,
           bottomCursor: result.bottomCursor,
           regularPostIds: result.regularPostIds,
+          unpinnedPostTimesMs: result.unpinnedPostIds.map(xSnowflakeTimestampMs),
+          hasUnknownEntries: result.hasUnknownEntries,
           now: result.completedAt,
         });
       }
@@ -308,6 +314,7 @@ export async function deliverNewInternalPosts(input: {
       createdAt: post.createdAt,
       kinds: kindsFromTypesJson(post.typesJson),
       mediaTypes: mediaTypesFromJson(post.mediaTypesJson),
+      reobserved: !post.isNew,
     });
   }
   const attempt = await input.delivery.deliverBatch(
