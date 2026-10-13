@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.7.1] - 2026-10-13
+
+
+### Fixed
+
+- 保持期間の整理を小分けにしてプロセス全体を止めないようにする (#61)
+
+
 ## [0.7.0] - 2026-10-13
 
 
@@ -190,6 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.7.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.5.1...v0.6.0
