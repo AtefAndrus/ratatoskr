@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { applyMigrations, SCHEMA_VERSION } from "../src/db/schema";
+import { applyRetentionInChunks, type RawTextWatermarks } from "../src/maintenance/retention";
 import { addReceiver, addTarget, createTestContext } from "./helpers/database";
 
 describe("receivers", () => {
@@ -159,7 +160,7 @@ describe("routes", () => {
 });
 
 describe("observations と保持期間", () => {
-  test("投稿の初出を受信アカウントと対象の組で判定し、生応答は保持期間で落とす", () => {
+  test("投稿の初出を受信アカウントと対象の組で判定し、生応答は保持期間で落とす", async () => {
     const context = createTestContext();
     try {
       const receiverA = addReceiver(context, "a");
@@ -233,18 +234,27 @@ describe("observations と保持期間", () => {
       expect(context.observations.listRecent(10, { errorsOnly: true })).toHaveLength(0);
       expect(context.observations.getResponseText(1)?.responseText).toBe('{"data":{}}');
 
-      const result = context.maintenance.applyRetention({
+      const watermarks: RawTextWatermarks = new Map();
+      const result = await applyRetentionInChunks({
+        maintenance: context.maintenance,
         rawBefore: "2026-09-03T00:00:30.000Z",
         rowsBefore: "2026-09-01T00:00:00.000Z",
+        watermarks,
       });
-      expect(result).toEqual({ rawTextCleared: 4, rowsDeleted: 0 });
+      // 観測 3 は期限より古いが、id の小さい観測 2 がまだ新しいので、観測 2 が期限を過ぎるまで本文を残す
+      expect(result).toEqual({ rawTextCleared: 2, rowsDeleted: 0 });
       expect(context.observations.getResponseText(1)?.responseText).toBeNull();
       expect(context.observations.getResponseText(2)?.responseText).toBe('{"data":{}}');
+      expect(context.observations.getResponseText(3)?.responseText).toBe('{"data":{}}');
 
-      const deleted = context.maintenance.applyRetention({
+      const deleted = await applyRetentionInChunks({
+        maintenance: context.maintenance,
         rawBefore: "2026-09-04T00:00:00.000Z",
         rowsBefore: "2026-09-03T00:00:30.000Z",
+        watermarks,
       });
+      expect(deleted.rawTextCleared).toBe(3);
+      expect(context.observations.getResponseText(3)?.responseText ?? null).toBeNull();
       // bun:sqlite の changes は外部キーの連鎖削除分も含むため下限だけを見る
       expect(deleted.rowsDeleted).toBeGreaterThanOrEqual(2);
       expect(context.maintenance.tableCounts()).toMatchObject({
