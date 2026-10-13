@@ -63,6 +63,7 @@ export interface InternalTimelineFetchResult extends InternalGraphqlResponse {
   posts: InternalTimelinePost[];
   regularPostIds: string[];
   unpinnedPostCreatedAts: Array<string | null>;
+  endOfTimeline: boolean;
   bottomCursor: string | null;
 }
 
@@ -119,6 +120,7 @@ export class XInternalGraphqlClient {
     let posts: InternalTimelinePost[] = [];
     let regularPostIds: string[] = [];
     let unpinnedPostCreatedAts: Array<string | null> = [];
+    let endOfTimeline = false;
     let parsedBottomCursor: string | null = null;
     let parseError: string | null = null;
     if (response.error === null && response.responseText !== null) {
@@ -127,6 +129,7 @@ export class XInternalGraphqlClient {
         posts = page.posts;
         regularPostIds = page.regularPostIds;
         unpinnedPostCreatedAts = page.unpinnedPostCreatedAts;
+        endOfTimeline = page.endOfTimeline;
         parsedBottomCursor = page.bottomCursor;
       } catch (failure) {
         parseError = errorMessage(failure);
@@ -138,6 +141,7 @@ export class XInternalGraphqlClient {
       posts,
       regularPostIds,
       unpinnedPostCreatedAts,
+      endOfTimeline,
       bottomCursor: parsedBottomCursor,
     };
   }
@@ -267,10 +271,11 @@ export interface InternalTimelinePage {
   /**
    * 固定投稿以外のエントリにある投稿の作成時刻。削除済みなどで読めない投稿は null にする。
    * regularPostIds と違い会話モジュールも含め、読めない投稿も落とさない。
-   * どちらも落とすと、返信や削除済み投稿だけのページを空とみなして補完を早く止めるため。
+   * どちらも落とすと、停止中の投稿を含むページを古いと誤って判定しうるため。
    * おすすめユーザーのように投稿を持たないエントリは数えない。null にすると、それが載るページを古いと判定できなくなる。
    */
   unpinnedPostCreatedAts: Array<string | null>;
+  endOfTimeline: boolean;
   bottomCursor: string | null;
 }
 
@@ -287,7 +292,7 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
     if (!isObject(instruction)) continue;
     const pinned = instruction.type === "TimelinePinEntry";
     // 会話の続きを足す TimelineAddToModule の投稿はまだ配信対象にしていないが、
-    // 補完がそのページを空とみなして止まらないよう時刻だけは数える。
+    // 補完がそのページを古いと判定するときの材料には入れる。
     if (Array.isArray(instruction.moduleItems)) {
       const moduleResults: unknown[] = [];
       collectEntryResults(instruction.moduleItems, moduleResults);
@@ -331,8 +336,32 @@ export function extractTimelinePage(payload: unknown): InternalTimelinePage {
     posts: [...posts.values()],
     regularPostIds: [...regularPostIds],
     unpinnedPostCreatedAts,
+    endOfTimeline: isEndOfTimeline(instructions),
     bottomCursor: sawBottomCursor ? bottomCursor : null,
   };
+}
+
+/**
+ * 履歴の末尾として実測した形 (固定投稿とカーソルだけ) に限って真にする。
+ * 投稿が読めないことから末尾を推すと、削除済み投稿や未知の構造だけのページで補完を早く止めるため。
+ */
+function isEndOfTimeline(instructions: readonly unknown[]): boolean {
+  return instructions.every((instruction) => {
+    if (!isObject(instruction)) return false;
+    if (instruction.type === "TimelinePinEntry") return true;
+    if (Object.keys(instruction).every((key) => key === "type")) return true;
+    return (
+      instruction.type === "TimelineAddEntries" &&
+      Object.keys(instruction).every((key) => key === "type" || key === "entries") &&
+      Array.isArray(instruction.entries) &&
+      instruction.entries.every(
+        (entry) =>
+          isObject(entry) &&
+          isObject(entry.content) &&
+          typeof entry.content.cursorType === "string",
+      )
+    );
+  });
 }
 
 /** TweetResultByRestId の応答 (`data.tweetResult.result`) から投稿 1 件を取り出す。 */

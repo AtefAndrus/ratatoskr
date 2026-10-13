@@ -944,6 +944,7 @@ describe("内部 GraphQL 経路のメディア判定", () => {
             parseError: null,
             regularPostIds: ["500", "501"],
             unpinnedPostCreatedAts: [],
+            endOfTimeline: false,
             bottomCursor: null,
             posts: [
               {

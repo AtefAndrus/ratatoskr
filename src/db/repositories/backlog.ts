@@ -191,6 +191,8 @@ export class BacklogRepository {
     regularPostIds: readonly string[];
     /** 固定投稿以外のエントリにある投稿の作成時刻。読めない投稿は null。 */
     unpinnedPostCreatedAts: ReadonlyArray<string | null>;
+    /** 固定投稿とカーソルだけのページ。実測した履歴の末尾の形。 */
+    endOfTimeline: boolean;
     now: string;
   }): void {
     const progress = this.get(input.targetId);
@@ -211,11 +213,10 @@ export class BacklogRepository {
       (input.bottomCursor === input.requestedCursor || seen.has(input.bottomCursor));
     // 履歴の末尾で X は固定投稿だけのページと、数値を 1 ずつ変えた Bottom カーソルを返し続ける。
     // カーソルの一致では循環を検出できないため、ページの中身で終端を判定する。
-    const timelineExhausted = input.unpinnedPostCreatedAts.length === 0;
     const notBeforeMs = new Date(progress.notBefore).getTime();
     // 時刻の読めない投稿が 1 件でもあれば古いと決めない。それが停止中の投稿かもしれないため。
     const notBeforeReached =
-      !timelineExhausted &&
+      input.unpinnedPostCreatedAts.length > 0 &&
       input.unpinnedPostCreatedAts.every((createdAt) => {
         const createdAtMs = createdAt === null ? Number.NaN : new Date(createdAt).getTime();
         return Number.isFinite(createdAtMs) && createdAtMs < notBeforeMs;
@@ -227,7 +228,7 @@ export class BacklogRepository {
           ? "bottom_cursor_missing"
           : cursorCycle
             ? "cursor_cycle"
-            : timelineExhausted
+            : input.endOfTimeline
               ? "timeline_exhausted"
               : notBeforeReached
                 ? "not_before_reached"

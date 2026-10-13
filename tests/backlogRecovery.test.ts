@@ -120,6 +120,7 @@ describe("停止中投稿の補完", () => {
         bottomCursor: "cursor-2",
         regularPostIds: ["known-1", "known-2", "known-3"],
         unpinnedPostCreatedAts: [null],
+        endOfTimeline: false,
         now: "2026-09-03T00:00:05.000Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
@@ -158,6 +159,7 @@ describe("停止中投稿の補完", () => {
         bottomCursor: "older-cursor",
         regularPostIds: ["known-1", "known-2", "known-3"],
         unpinnedPostCreatedAts: [null],
+        endOfTimeline: false,
         now: "2026-09-03T00:00:03.000Z",
       });
       seedSuccessfulObservation(
@@ -293,6 +295,7 @@ describe("停止中投稿の補完", () => {
         bottomCursor: "cursor-2",
         regularPostIds: [],
         unpinnedPostCreatedAts: [null],
+        endOfTimeline: false,
         now: "2026-09-03T00:01:01.001Z",
       });
       context.backlog.savePage({
@@ -302,6 +305,7 @@ describe("停止中投稿の補完", () => {
         bottomCursor: "stale-cursor",
         regularPostIds: [],
         unpinnedPostCreatedAts: [null],
+        endOfTimeline: false,
         now: "2026-09-03T00:01:01.002Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
@@ -423,6 +427,7 @@ describe("停止中投稿の補完", () => {
         bottomCursor: "cursor-1",
         regularPostIds: [],
         unpinnedPostCreatedAts: [null],
+        endOfTimeline: false,
         now: "2026-09-03T00:00:03.000Z",
       });
       expect(context.backlog.get(targetId)).toMatchObject({
@@ -434,7 +439,7 @@ describe("停止中投稿の補完", () => {
     }
   });
 
-  test("固定投稿だけのページは毎回別のBottomカーソルが付いても完了にする", () => {
+  test("投稿の読めないページでは続け、固定投稿とカーソルだけのページは毎回別のBottomカーソルが付いても完了にする", () => {
     const context = createTestContext();
     try {
       const receiverId = addReceiver(context);
@@ -442,22 +447,37 @@ describe("停止中投稿の補完", () => {
       context.routes.add({ targetId, guildId: "g", channelId: "c" });
       setRouteCreatedAt(context.db, targetId, "2026-09-01T00:00:00.000Z");
       context.backlog.ensure(targetId, "2026-09-02T00:00:00.000Z");
-      context.backlog.startFromLatest(targetId, "end-rWU", "2026-09-03T00:00:00.000Z");
-      context.backlog.acquire(
-        targetId,
-        receiverId,
-        "2026-09-03T00:00:01.000Z",
-        "2026-09-03T00:01:01.000Z",
-      );
-      context.backlog.savePage({
-        targetId,
-        receiverId,
-        requestedCursor: "end-rWU",
-        bottomCursor: "end-rWQ",
-        regularPostIds: [],
-        unpinnedPostCreatedAts: [],
-        now: "2026-09-03T00:00:02.000Z",
+      context.backlog.startFromLatest(targetId, "end-rWY", "2026-09-03T00:00:00.000Z");
+      const savePage = (
+        requestedCursor: string,
+        bottomCursor: string,
+        endOfTimeline: boolean,
+      ): void => {
+        context.backlog.acquire(
+          targetId,
+          receiverId,
+          "2026-09-03T00:00:01.000Z",
+          "2026-09-03T00:01:01.000Z",
+        );
+        context.backlog.savePage({
+          targetId,
+          receiverId,
+          requestedCursor,
+          bottomCursor,
+          regularPostIds: [],
+          unpinnedPostCreatedAts: [],
+          endOfTimeline,
+          now: "2026-09-03T00:00:02.000Z",
+        });
+      };
+
+      savePage("end-rWY", "end-rWU", false);
+      expect(context.backlog.get(targetId)).toMatchObject({
+        state: "pending",
+        lastStopReason: "page_saved",
       });
+
+      savePage("end-rWU", "end-rWQ", true);
       expect(context.backlog.get(targetId)).toMatchObject({
         state: "complete",
         nextCursor: null,
@@ -495,6 +515,7 @@ describe("停止中投稿の補完", () => {
           bottomCursor,
           regularPostIds: [],
           unpinnedPostCreatedAts,
+          endOfTimeline: false,
           now: "2026-09-03T00:00:02.000Z",
         });
       };
@@ -583,6 +604,7 @@ describe("永続送信キュー", () => {
             bottomCursor: "cursor-2",
             regularPostIds: ["1"],
             unpinnedPostCreatedAts: [null],
+            endOfTimeline: false,
             now: "2026-09-03T00:00:03.000Z",
           });
         },
@@ -809,6 +831,7 @@ function page(
     posts,
     regularPostIds,
     unpinnedPostCreatedAts: posts.map((value) => value.createdAt),
+    endOfTimeline: false,
     bottomCursor,
   };
 }

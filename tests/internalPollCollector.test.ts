@@ -180,6 +180,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
             parseError: null,
             regularPostIds: ["500"],
             unpinnedPostCreatedAts: ["2026-09-05T00:00:00.000Z"],
+            endOfTimeline: false,
             bottomCursor: null,
             posts: [
               {
@@ -285,6 +286,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
         bottomCursor: null,
         regularPostIds: [],
         unpinnedPostCreatedAts: [],
+        endOfTimeline: false,
         now: "2026-09-05T00:00:02.000Z",
       });
 
@@ -334,6 +336,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
             parseError: null,
             regularPostIds: [],
             unpinnedPostCreatedAts: [],
+            endOfTimeline: false,
             bottomCursor: null,
             posts: [],
           };
@@ -395,6 +398,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
             parseError: null,
             regularPostIds: [],
             unpinnedPostCreatedAts: [],
+            endOfTimeline: false,
             bottomCursor: null,
             posts: [],
           };
@@ -461,6 +465,7 @@ function emptyTimelinePage(bottomCursor: string): InternalTimelineFetchResult {
     parseError: null,
     regularPostIds: [],
     unpinnedPostCreatedAts: [],
+    endOfTimeline: false,
     bottomCursor,
     posts: [],
   };

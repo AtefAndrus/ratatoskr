@@ -242,6 +242,7 @@ export class InternalPollCollector {
           bottomCursor: result.bottomCursor,
           regularPostIds: result.regularPostIds,
           unpinnedPostCreatedAts: result.unpinnedPostCreatedAts,
+          endOfTimeline: result.endOfTimeline,
           now: result.completedAt,
         });
       }

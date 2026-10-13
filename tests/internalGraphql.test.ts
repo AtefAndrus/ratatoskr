@@ -152,6 +152,7 @@ describe("X 内部 GraphQL", () => {
     expect(extractTimelinePage(payload)).toMatchObject({
       bottomCursor: "cursor-2",
       regularPostIds: ["2"],
+      endOfTimeline: false,
       unpinnedPostCreatedAts: [
         "2026-09-03T00:00:00.000Z",
         null,
@@ -167,6 +168,50 @@ describe("X 内部 GraphQL", () => {
       "1",
       "0",
     ]);
+  });
+
+  test("固定投稿とカーソルだけのページに限って履歴の末尾とみなす", () => {
+    const cursors = [
+      { entryId: "cursor-top-1", content: { cursorType: "Top", value: "top" } },
+      { entryId: "cursor-bottom-1", content: { cursorType: "Bottom", value: "bottom" } },
+    ];
+    const pin = { type: "TimelinePinEntry", entry: entry("tweet-9", tweet("9", {})) };
+
+    expect(
+      timelinePage([
+        { type: "TimelineClearCache" },
+        pin,
+        { type: "TimelineAddEntries", entries: cursors },
+      ]),
+    ).toMatchObject({ endOfTimeline: true, unpinnedPostCreatedAts: [], bottomCursor: "bottom" });
+    expect(
+      timelinePage([
+        pin,
+        {
+          type: "TimelineAddEntries",
+          entries: [entry("tweet-unavailable", { tweet_results: {} }), ...cursors],
+        },
+      ]).endOfTimeline,
+    ).toBe(false);
+    expect(
+      timelinePage([
+        pin,
+        {
+          type: "TimelineAddEntries",
+          entries: [
+            { entryId: "who-to-follow-1", content: { entryType: "TimelineTimelineModule" } },
+            ...cursors,
+          ],
+        },
+      ]).endOfTimeline,
+    ).toBe(false);
+    expect(
+      timelinePage([
+        pin,
+        { type: "TimelineAddEntries", entries: cursors },
+        { type: "TimelineAddToModule", moduleItems: [] },
+      ]).endOfTimeline,
+    ).toBe(false);
   });
 
   test("API errors、タイムライン欠落、不正なBottomカーソルを拒否する", () => {
@@ -326,6 +371,12 @@ describe("X 内部 GraphQL", () => {
     expect(malformed.parseError).toContain("正常なタイムライン構造");
   });
 });
+
+function timelinePage(instructions: object[]): ReturnType<typeof extractTimelinePage> {
+  return extractTimelinePage({
+    data: { user: { result: { timeline: { timeline: { instructions } } } } },
+  });
+}
 
 function entry(entryId: string, itemContent: object): object {
   return { entryId, content: { itemContent } };
