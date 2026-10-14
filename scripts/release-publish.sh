@@ -92,12 +92,14 @@ sync_local() {
   fi
 
   # 追跡ブランチも揃えないと、git status がリリースコミットの分だけ main を ahead と示し、fetch するまで反映を判断できない。
-  # 既に先へ進んでいる (fetch 済みの) ときは戻さない。
+  # 今の値がリリースコミットの祖先だと確かめられたときだけ進める。祖先関係を確かめられない (shallow clone など) ときや、
+  # 既に fetch して先へ進んでいるときは触らない。--no-deref は、追跡ブランチが別のブランチへの symbolic ref に
+  # 置き換えられていても、その先を書き換えないため。
   local tracking
   tracking=$("${lg[@]}" rev-parse --quiet --verify refs/remotes/origin/main || true)
   if [ -n "$tracking" ] && [ "$tracking" != "$commit" ] &&
-    ! "${lg[@]}" merge-base --is-ancestor "$commit" "$tracking" 2>/dev/null; then
-    "${lg[@]}" update-ref -m "release $tag" refs/remotes/origin/main "$commit" "$tracking" ||
+    "${lg[@]}" merge-base --is-ancestor "$tracking" "$commit" 2>/dev/null; then
+    "${lg[@]}" update-ref --no-deref -m "release $tag" refs/remotes/origin/main "$commit" "$tracking" ||
       echo "release-publish: refs/remotes/origin/main を $commit へ進められなかった。git fetch origin main で揃える。" >&2
   fi
 

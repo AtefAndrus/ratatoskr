@@ -11,21 +11,34 @@ permissions: {}
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: read
     steps:
+      # Coolify は Release のタグではなく main の先頭をビルドするので、待つ版も main から読む。
+      # イベントの ref を使うと、main が先へ進んだ後の再実行や別ブランチからの手動起動で、待つ版とデプロイされる版がずれる。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           persist-credentials: false
+      - name: Record the serving process
+        id: before
+        env:
+          HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
+        run: |
+          if [ -z "$HEALTH_URL" ]; then
+            echo "::error::repository variable PRODUCTION_HEALTH_URL is not set"; exit 1
+          fi
+          # 取れなければ空のまま進む。そのときは同じ版を出し直しても新旧を見分けられない
+          started_at=$(curl --silent --max-time 10 "$HEALTH_URL" | jq -r '.startedAt // empty' 2>/dev/null || true)
+          echo "started_at=$started_at" >> "$GITHUB_OUTPUT"
+          echo "serving process started at: ${started_at:-unknown}"
       - name: Trigger Coolify Deployment
-        id: trigger
         env:
           COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         # Coolify の /api/v1/deploy は POST を要求する (GET は 200 で「POST に変わった」と返すだけでデプロイしない)
         run: |
-          echo "triggered_at=$(date +%s)" >> "$GITHUB_OUTPUT"
           response=$(curl -s -w "\n%{http_code}" \
             --request POST "$COOLIFY_WEBHOOK" \
             --header "Authorization: Bearer $COOLIFY_TOKEN" \
@@ -48,10 +61,7 @@ jobs:
       - name: Wait for the new version to be serving
         env:
           HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
-          TRIGGERED_AT: ${{ steps.trigger.outputs.triggered_at }}
+          PREVIOUS_STARTED_AT: ${{ steps.before.outputs.started_at }}
         run: |
-          if [ -z "$HEALTH_URL" ]; then
-            echo "::error::repository variable PRODUCTION_HEALTH_URL is not set"; exit 1
-          fi
           version=$(jq -er .version package.json)
-          bash scripts/wait-for-deploy.sh "$HEALTH_URL" "$version" "$TRIGGERED_AT"
+          bash scripts/wait-for-deploy.sh "$HEALTH_URL" "$version" "$PREVIOUS_STARTED_AT"
