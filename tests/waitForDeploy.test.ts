@@ -174,7 +174,7 @@ describe("wait-for-deploy.sh", () => {
     expect(result.exitCode).toBe(1);
   }, 15_000);
 
-  test("デプロイ前のサーバーの時刻を記録し、読めなければ失敗する", async () => {
+  test("デプロイ前のサーバーの時刻を記録し、旧版の /health なら空を、どちらでもなければ失敗する", async () => {
     const known = await withHealthServer(
       () => OLD,
       async (url) => await runScript(["--snapshot", url]),
@@ -182,17 +182,30 @@ describe("wait-for-deploy.sh", () => {
     expect(known).toMatchObject({ exitCode: 0, stdout: `${BASELINE}\n` });
 
     const legacy = await withHealthServer(
-      () => ({ raw: JSON.stringify({ status: "ok", uptime: 1 }) }),
+      () => ({ raw: JSON.stringify({ status: "ok", discord: { connected: true }, uptime: 1 }) }),
       async (url) => await runScript(["--snapshot", url]),
     );
     expect(legacy).toMatchObject({ exitCode: 0, stdout: "\n" });
+
+    // 旧版と取り違えて空の基準にすると、同じ版の出し直しで動き続けている旧プロセスを成功にする
+    const proxyError = await withHealthServer(
+      () => ({ raw: JSON.stringify({ error: "temporarily unavailable" }), status: 503 }),
+      async (url) => await runScript(["--snapshot", url]),
+    );
+    expect(proxyError.exitCode).toBe(1);
+
+    const withoutNow = await withHealthServer(
+      () => ({ raw: JSON.stringify({ status: "ok", discord: {}, uptime: 1, ...OLD }) }),
+      async (url) => await runScript(["--snapshot", url]),
+    );
+    expect(withoutNow.exitCode).toBe(1);
 
     const unreadable = await withHealthServer(
       () => ({ raw: "<html>", status: 502 }),
       async (url) => await runScript(["--snapshot", url]),
     );
     expect(unreadable.exitCode).toBe(1);
-  }, 15_000);
+  }, 30_000);
 
   test("jq が無ければすぐに失敗する", async () => {
     const bin = mkdtempSync(join(tmpdir(), "wait-for-deploy-"));

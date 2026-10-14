@@ -2,8 +2,8 @@
 # デプロイの前後で本番の /health を読み、新しい版のプロセスに切り替わったことを確かめる。
 #
 #   wait-for-deploy.sh --snapshot <health-url>
-#     デプロイを起こす直前のサーバーの時刻 (/health の now) を出力する。now を返さない版 (応答は読める) なら空行を出力する。
-#     応答を読めないまま試行を使い切ったら失敗で終わる。
+#     デプロイを起こす直前のサーバーの時刻 (/health の now) を出力する。版を返さない旧版の /health なら空行を出力する。
+#     どちらも読めないまま試行を使い切ったら失敗で終わる。
 #   wait-for-deploy.sh <health-url> <expected-version> <baseline>
 #     /health が、待つ版で起動時刻が <baseline> より後のプロセスだけを返し続け、Coolify のロールバック判定を越えて
 #     正常に動いていることを確かめるまで待つ。<baseline> が空なら、起動時刻を返すプロセスをすべて新しいとみなす
@@ -37,26 +37,32 @@ interval_seconds=${INTERVAL_SECONDS:-10}
 # Date.prototype.toISOString の形。この形どうしなら文字列の順序が時刻の順序と一致する
 iso_time='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'
 
-# /health を 1 回読み、status (HTTP 状態)、version、started_at、now、readable (本文を JSON として読めたか) を設定する。
-# started_at と now は形式が合わなければ空にする。
+# /health を 1 回読み、status (HTTP 状態)、version、started_at、now、readable (本文を JSON として読めたか)、
+# health_shaped (本文が /health の形か) を設定する。started_at と now は形式が合わなければ空にする。
 read_health() {
   local response parsed
   status=""
   version=""
   started_at=""
   now=""
+  health_shaped=false
   readable=false
   # 503 (Discord 未接続) の本文にも版と起動時刻が載るので、状態コードでは捨てない
   response=$(curl --silent --show-error --max-time 10 --write-out '\n%{http_code}' "$1" 2>/dev/null) || return 0
   status=${response##*$'\n'}
   if parsed=$(printf '%s' "${response%$'\n'*}" |
-    jq -er 'select(type == "object") | [(.version // ""), (.startedAt // ""), (.now // "")] | map(tostring) | @tsv' 2>/dev/null); then
+    jq -er 'select(type == "object") |
+      [(.version // ""), (.startedAt // ""), (.now // ""),
+        ((.status | type) == "string" and (.discord | type) == "object" and (.uptime | type) == "number")] |
+      map(tostring) | @tsv' 2>/dev/null); then
     readable=true
     # read は空の欄を詰めてしまうので、タブで順に切り出す
     version=${parsed%%$'\t'*}
     parsed=${parsed#*$'\t'}
     started_at=${parsed%%$'\t'*}
-    now=${parsed#*$'\t'}
+    parsed=${parsed#*$'\t'}
+    now=${parsed%%$'\t'*}
+    health_shaped=${parsed#*$'\t'}
     [[ $started_at =~ $iso_time ]] || started_at=""
     [[ $now =~ $iso_time ]] || now=""
   fi
@@ -66,13 +72,19 @@ if [ "${1:-}" = --snapshot ]; then
   [ "$#" -eq 2 ] || usage
   for _ in 1 2 3; do
     read_health "$2"
-    if [ "$readable" = true ]; then
+    if [ -n "$now" ]; then
       printf '%s\n' "$now"
+      exit 0
+    fi
+    # 空の基準はどのプロセスも新しいとみなすので、版を返さない旧版の /health の形に限る。proxy のエラー本文や
+    # now を欠いた応答を旧版と取り違えると、同じ版の出し直しで動き続けている旧プロセスを成功にする
+    if [ "$readable" = true ] && [ -z "$version" ] && [ "$health_shaped" = true ]; then
+      echo
       exit 0
     fi
     sleep "$interval_seconds"
   done
-  echo "wait-for-deploy: デプロイ前の /health を読めなかった (HTTP ${status:-なし})。新旧のプロセスを見分けられない" >&2
+  echo "wait-for-deploy: デプロイ前の /health からサーバーの時刻を読めなかった (HTTP ${status:-なし})。新旧のプロセスを見分けられない" >&2
   exit 1
 fi
 
