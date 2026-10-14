@@ -99,9 +99,10 @@ if [ -n "$baseline" ] && ! [[ $baseline =~ $iso_time ]]; then
 fi
 
 timeout_seconds=${TIMEOUT_SECONDS:-1500}
-# Coolify は Dockerfile に HEALTHCHECK があれば Docker の health 状態で新旧を決め、healthy を見たら旧コンテナを外すだけで
-# 戻さない。Docker が unhealthy と決めるまでは、設定の上では start-period + retries × (interval + timeout) 秒 (今は
-# 15 + 3 × 35 = 120 秒) で、2026-10-13 の失敗では約 105 秒で戻された。HEALTHCHECK を延ばすときはこの値も延ばす
+# Coolify はデプロイのたびに Dockerfile の HEALTHCHECK から自分のヘルスチェック設定を取り込み、start-period だけ待って
+# から interval ごとに retries 回 Docker の health 状態を見る。healthy を見たら旧コンテナを外すだけで戻さず、見られない
+# まま回数を使い切ったら戻すので、戻すのは起動から start-period + retries × interval 秒 (今は 15 + 3 × 30 = 105 秒) まで
+# である。2026-10-13 の失敗でもちょうど 105 秒で戻された。HEALTHCHECK を延ばすときはこの値も延ばす
 # (tests/waitForDeploy.test.ts が確かめる)。
 stable_seconds=${STABLE_SECONDS:-180}
 

@@ -226,9 +226,9 @@ describe("wait-for-deploy.sh", () => {
     }
   });
 
-  test("安定の待ち時間は Dockerfile の HEALTHCHECK が unhealthy と決めるまでの設定の上での時間より長い", async () => {
+  test("安定の待ち時間は Coolify が Dockerfile の HEALTHCHECK に従って戻しうる期間より長い", async () => {
     const dockerfile = await Bun.file(new URL("../Dockerfile", import.meta.url)).text();
-    // 秒以外の単位 (2m など) を数字の部分だけで読むと unhealthy までの時間を短く見積もるので、秒の整数以外は失敗にする
+    // 秒以外の単位 (2m など) を数字の部分だけで読むと戻しうる期間を短く見積もるので、秒の整数以外は失敗にする
     const option = (name: string, unit: "s" | ""): number => {
       const match = new RegExp(`--${name}=(\\S+)`).exec(dockerfile);
       const value = match?.[1] ?? "";
@@ -241,9 +241,9 @@ describe("wait-for-deploy.sh", () => {
     };
     const script = await Bun.file(SCRIPT).text();
     const stable = Number(/STABLE_SECONDS:-(\d+)/.exec(script)?.[1]);
-    const worstUnhealthy =
-      option("start-period", "s") +
-      option("retries", "") * (option("interval", "s") + option("timeout", "s"));
-    expect(stable).toBeGreaterThan(worstUnhealthy);
+    // Coolify は start-period だけ待ってから interval ごとに retries 回 Docker の health 状態を見て、最後に戻すかを決める
+    const rollbackWindow =
+      option("start-period", "s") + option("retries", "") * option("interval", "s");
+    expect(stable).toBeGreaterThan(rollbackWindow);
   });
 });
