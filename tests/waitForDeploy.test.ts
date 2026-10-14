@@ -226,9 +226,9 @@ describe("wait-for-deploy.sh", () => {
     }
   });
 
-  test("安定の待ち時間は Dockerfile の HEALTHCHECK が unhealthy と決めるまでの最長時間より長い", async () => {
+  test("安定の待ち時間は Dockerfile の HEALTHCHECK が unhealthy と決めるまでの設定の上での時間より長い", async () => {
     const dockerfile = await Bun.file(new URL("../Dockerfile", import.meta.url)).text();
-    // 秒以外の単位 (2m など) を数字の部分だけで読むと最長時間を短く見積もるので、秒の整数以外は失敗にする
+    // 秒以外の単位 (2m など) を数字の部分だけで読むと unhealthy までの時間を短く見積もるので、秒の整数以外は失敗にする
     const option = (name: string, unit: "s" | ""): number => {
       const match = new RegExp(`--${name}=(\\S+)`).exec(dockerfile);
       const value = match?.[1] ?? "";
