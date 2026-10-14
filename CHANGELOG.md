@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.7.2] - 2026-10-14
+
+
+### Fixed
+
+- デプロイ workflow で新しい版が本番で動き始めるまで待つ (#62)
+
+
 ## [0.7.1] - 2026-10-13
 
 
@@ -198,6 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.7.2]: https://github.com/AtefAndrus/ratatoskr/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.6.0...v0.6.1
