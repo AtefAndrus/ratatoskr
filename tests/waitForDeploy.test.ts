@@ -228,15 +228,22 @@ describe("wait-for-deploy.sh", () => {
 
   test("安定の待ち時間は Dockerfile の HEALTHCHECK が unhealthy と決めるまでの最長時間より長い", async () => {
     const dockerfile = await Bun.file(new URL("../Dockerfile", import.meta.url)).text();
-    const option = (name: string): number => {
-      const match = new RegExp(`--${name}=(\\d+)s?`).exec(dockerfile);
-      if (!match?.[1]) throw new Error(`HEALTHCHECK --${name} が見つからない`);
-      return Number(match[1]);
+    // 秒以外の単位 (2m など) を数字の部分だけで読むと最長時間を短く見積もるので、秒の整数以外は失敗にする
+    const option = (name: string, unit: "s" | ""): number => {
+      const match = new RegExp(`--${name}=(\\S+)`).exec(dockerfile);
+      const value = match?.[1] ?? "";
+      if (!new RegExp(`^\\d+${unit}$`).test(value)) {
+        throw new Error(
+          `HEALTHCHECK --${name}=${value} を読めない。秒の整数で書くか、このテストを直す`,
+        );
+      }
+      return Number.parseInt(value, 10);
     };
     const script = await Bun.file(SCRIPT).text();
     const stable = Number(/STABLE_SECONDS:-(\d+)/.exec(script)?.[1]);
     const worstUnhealthy =
-      option("start-period") + option("retries") * (option("interval") + option("timeout"));
+      option("start-period", "s") +
+      option("retries", "") * (option("interval", "s") + option("timeout", "s"));
     expect(stable).toBeGreaterThan(worstUnhealthy);
   });
 });

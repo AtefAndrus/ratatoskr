@@ -105,20 +105,31 @@ timeout_seconds=${TIMEOUT_SECONDS:-1500}
 # (tests/waitForDeploy.test.ts が確かめる)。
 stable_seconds=${STABLE_SECONDS:-180}
 
-deadline=$(($(date +%s) + timeout_seconds))
-# 新しいプロセスだけを観測し続けている区間の、起動時刻と始まり (ランナーの時計)
+# ランナーの経過秒数。date +%s の壁時計は時刻同期で飛ぶ (WSL2 で 1 分に 2 回、約 3.6 秒ずつ進むのを観測した) ので、
+# 安定の待ち時間を短く数えないよう、読めるときは単調に進む /proc/uptime を使う
+elapsed_seconds() {
+  local uptime
+  if [ -r /proc/uptime ] && read -r uptime _ </proc/uptime; then
+    printf '%s\n' "${uptime%%.*}"
+  else
+    date +%s
+  fi
+}
+
+deadline=$(($(elapsed_seconds) + timeout_seconds))
+# 新しいプロセスだけを観測し続けている区間の、起動時刻と始まり (elapsed_seconds の値)
 streak_started_at=""
 streak_since=""
 last_seen="応答なし"
 
 while :; do
-  if [ "$(date +%s)" -ge "$deadline" ]; then
+  if [ "$(elapsed_seconds)" -ge "$deadline" ]; then
     echo "wait-for-deploy: ${timeout_seconds} 秒以内に v${expected_version} の新しいプロセスが安定しなかった (最後の観測: ${last_seen})" >&2
     exit 1
   fi
 
   read_health "$health_url"
-  observed_at=$(date +%s)
+  observed_at=$(elapsed_seconds)
   # 期限の直前に始めた読み取りが期限後に返った応答では、成功にしない
   [ "$observed_at" -lt "$deadline" ] || continue
 
