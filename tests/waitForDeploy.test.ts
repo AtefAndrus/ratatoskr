@@ -135,7 +135,8 @@ describe("wait-for-deploy.sh", () => {
   test("デプロイ前の版が時刻を返さなかったときは、起動時刻を返すプロセスを新しいとみなす", async () => {
     const result = await withHealthServer(
       (call) => (call <= 2 ? { version: NEW.version } : NEW),
-      async (url) => await waitForDeploy(url, NEW.version, ""),
+      // 旧版の応答を 2 回挟んでから安定の待ち時間を数えるので、期限に余裕を持たせる
+      async (url) => await waitForDeploy(url, NEW.version, "", { TIMEOUT_SECONDS: "15" }),
     );
     expect(result.exitCode).toBe(0);
 
@@ -144,7 +145,7 @@ describe("wait-for-deploy.sh", () => {
       async (url) => await waitForDeploy(url, NEW.version, ""),
     );
     expect(legacy.exitCode).toBe(1);
-  }, 30_000);
+  }, 40_000);
 
   test("新しいプロセスが 503 を返し続ける間は成功としない", async () => {
     const result = await withHealthServer(
@@ -199,6 +200,12 @@ describe("wait-for-deploy.sh", () => {
       async (url) => await runScript(["--snapshot", url]),
     );
     expect(withoutNow.exitCode).toBe(1);
+
+    const nullVersion = await withHealthServer(
+      () => ({ raw: JSON.stringify({ status: "ok", discord: {}, uptime: 1, version: null }) }),
+      async (url) => await runScript(["--snapshot", url]),
+    );
+    expect(nullVersion.exitCode).toBe(1);
 
     const unreadable = await withHealthServer(
       () => ({ raw: "<html>", status: 502 }),

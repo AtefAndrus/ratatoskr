@@ -38,14 +38,14 @@ interval_seconds=${INTERVAL_SECONDS:-10}
 iso_time='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'
 
 # /health を 1 回読み、status (HTTP 状態)、version、started_at、now、readable (本文を JSON として読めたか)、
-# health_shaped (本文が /health の形か) を設定する。started_at と now は形式が合わなければ空にする。
+# legacy_health (本文が version と now を持たない旧版の /health の形か) を設定する。started_at と now は形式が合わなければ空にする。
 read_health() {
   local response parsed
   status=""
   version=""
   started_at=""
   now=""
-  health_shaped=false
+  legacy_health=false
   readable=false
   # 503 (Discord 未接続) の本文にも版と起動時刻が載るので、状態コードでは捨てない
   response=$(curl --silent --show-error --max-time 10 --write-out '\n%{http_code}' "$1" 2>/dev/null) || return 0
@@ -53,7 +53,8 @@ read_health() {
   if parsed=$(printf '%s' "${response%$'\n'*}" |
     jq -er 'select(type == "object") |
       [(.version // ""), (.startedAt // ""), (.now // ""),
-        ((.status | type) == "string" and (.discord | type) == "object" and (.uptime | type) == "number")] |
+        ((.status | type) == "string" and (.discord | type) == "object" and (.uptime | type) == "number" and
+          (has("version") | not) and (has("now") | not))] |
       map(tostring) | @tsv' 2>/dev/null); then
     readable=true
     # read は空の欄を詰めてしまうので、タブで順に切り出す
@@ -62,7 +63,7 @@ read_health() {
     started_at=${parsed%%$'\t'*}
     parsed=${parsed#*$'\t'}
     now=${parsed%%$'\t'*}
-    health_shaped=${parsed#*$'\t'}
+    legacy_health=${parsed#*$'\t'}
     [[ $started_at =~ $iso_time ]] || started_at=""
     [[ $now =~ $iso_time ]] || now=""
   fi
@@ -78,7 +79,7 @@ if [ "${1:-}" = --snapshot ]; then
     fi
     # 空の基準はどのプロセスも新しいとみなすので、版を返さない旧版の /health の形に限る。proxy のエラー本文や
     # now を欠いた応答を旧版と取り違えると、同じ版の出し直しで動き続けている旧プロセスを成功にする
-    if [ "$readable" = true ] && [ -z "$version" ] && [ "$health_shaped" = true ]; then
+    if [ "$legacy_health" = true ]; then
       echo
       exit 0
     fi

@@ -72,6 +72,6 @@ main の ruleset は必須ステータスチェックを課すが Admin ロー�
 ## Step 4: Verify
 
 1. スクリプトが最後に出力した Release の URL を開ける: `gh release view v<version>`
-2. Deploy workflow が成功している: `gh run list --workflow deploy.yml -L 1`。この workflow は Coolify にデプロイを起こしたあと、`/health` が新しい版のプロセスを返し、Coolify のロールバック判定を越えて動き続けるまで待つ (`scripts/wait-for-deploy.sh`)。失敗は確認が成り立たなかったことを示し、デプロイの失敗とは限らない (デプロイ前の `/health` を読めなかった、観測中に読めない応答が続いた、など)。再デプロイの前に、本番の `/health` が `version` で新しい版を返し、`startedAt` が workflow のログの `server time before deploying` より後で、200 を返しているかを見る。そうなっていれば切り替わっているので再デプロイしない。なっていなければ、Coolify のデプロイログでヘルスチェックの失敗による戻しかビルドの失敗かを確かめ、原因を直して workflow を再実行する。
+2. Deploy workflow が成功している: `gh run list --workflow deploy.yml -L 1`。この workflow は Coolify にデプロイを起こしたあと、`/health` が新しい版のプロセスを返し、Coolify のロールバック判定を越えて動き続けるまで待つ (`scripts/wait-for-deploy.sh`)。失敗は確認が成り立たなかったことを示し、デプロイの失敗とは限らない (デプロイ前の `/health` を読めなかった、観測中に読めない応答が続いた、など)。再デプロイの前に、Coolify のデプロイログでそのデプロイが完了したか (新しいコンテナがヘルスチェックを通り、旧コンテナが外されたか) を確かめる。`/health` を 1 回読んだだけでは、ロールバック判定の前の新しいコンテナを見ている場合があるので、切り替わったとはみなさない。完了していて `/health` が新しい版を返していれば再デプロイしない。ヘルスチェックの失敗による戻しやビルドの失敗なら、原因を直して workflow を再実行する。
 3. イメージ公開の workflow が成功している: `gh run list --workflow publish-image.yml -L 1`
 4. Release の URL をユーザーに報告する
