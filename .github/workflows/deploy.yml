@@ -8,6 +8,12 @@ on:
 
 permissions: {}
 
+# Coolify は main の先頭をビルドするので、待っている間に次のリリースが main を進めると、前の実行が待つ版はデプロイされない。
+# 版が変わるのはリリースのときだけで、リリースは必ずこの workflow を起こすので、後の実行で前の実行を取り消す。
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -29,8 +35,13 @@ jobs:
           if [ -z "$HEALTH_URL" ]; then
             echo "::error::repository variable PRODUCTION_HEALTH_URL is not set"; exit 1
           fi
-          # 取れなければ空のまま進む。そのときは同じ版を出し直しても新旧を見分けられない
-          started_at=$(curl --silent --max-time 10 "$HEALTH_URL" | jq -r '.startedAt // empty' 2>/dev/null || true)
+          # 読めなくてもデプロイは起こす (本番が落ちているときの復旧を妨げない)。確認は次の step で失敗にする
+          if started_at=$(bash scripts/wait-for-deploy.sh --snapshot "$HEALTH_URL"); then
+            echo "known=true" >> "$GITHUB_OUTPUT"
+          else
+            started_at=""
+            echo "known=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "started_at=$started_at" >> "$GITHUB_OUTPUT"
           echo "serving process started at: ${started_at:-unknown}"
       - name: Trigger Coolify Deployment
@@ -62,6 +73,11 @@ jobs:
         env:
           HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
           PREVIOUS_STARTED_AT: ${{ steps.before.outputs.started_at }}
+          PREVIOUS_KNOWN: ${{ steps.before.outputs.known }}
         run: |
+          if [ "$PREVIOUS_KNOWN" != true ]; then
+            echo "::error::could not read /health before deploying, so the new process cannot be told apart from the old one. Check the Coolify deployment log and /health manually."
+            exit 1
+          fi
           version=$(jq -er .version package.json)
           bash scripts/wait-for-deploy.sh "$HEALTH_URL" "$version" "$PREVIOUS_STARTED_AT"
