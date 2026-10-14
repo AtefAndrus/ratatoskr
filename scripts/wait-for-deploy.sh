@@ -99,7 +99,10 @@ if [ -n "$baseline" ] && ! [[ $baseline =~ $iso_time ]]; then
 fi
 
 timeout_seconds=${TIMEOUT_SECONDS:-1500}
-# 2026-10-13 の失敗では、Coolify は新しいコンテナの起動から約 105 秒で旧コンテナへ戻した
+# Coolify は Dockerfile に HEALTHCHECK があれば Docker の health 状態で新旧を決め、healthy を見たら旧コンテナを外すだけで
+# 戻さない。Docker が unhealthy と決めるのは起動から最大で start-period + retries × (interval + timeout) 秒 (今は
+# 15 + 3 × 35 = 120 秒) で、2026-10-13 の失敗では約 105 秒で戻された。HEALTHCHECK を延ばすときはこの値も延ばす
+# (tests/waitForDeploy.test.ts が確かめる)。
 stable_seconds=${STABLE_SECONDS:-180}
 
 deadline=$(($(date +%s) + timeout_seconds))

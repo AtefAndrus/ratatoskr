@@ -225,4 +225,18 @@ describe("wait-for-deploy.sh", () => {
       rmSync(bin, { recursive: true, force: true });
     }
   });
+
+  test("安定の待ち時間は Dockerfile の HEALTHCHECK が unhealthy と決めるまでの最長時間より長い", async () => {
+    const dockerfile = await Bun.file(new URL("../Dockerfile", import.meta.url)).text();
+    const option = (name: string): number => {
+      const match = new RegExp(`--${name}=(\\d+)s?`).exec(dockerfile);
+      if (!match?.[1]) throw new Error(`HEALTHCHECK --${name} が見つからない`);
+      return Number(match[1]);
+    };
+    const script = await Bun.file(SCRIPT).text();
+    const stable = Number(/STABLE_SECONDS:-(\d+)/.exec(script)?.[1]);
+    const worstUnhealthy =
+      option("start-period") + option("retries") * (option("interval") + option("timeout"));
+    expect(stable).toBeGreaterThan(worstUnhealthy);
+  });
 });
