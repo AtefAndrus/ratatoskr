@@ -142,7 +142,7 @@ while :; do
       streak_since=$observed_at
       echo "wait-for-deploy: v${version} の新しいプロセス (起動 ${started_at}) を観測した。${stable_seconds} 秒続くまで待つ"
     elif [ "$status" = 200 ] && [ $((observed_at - streak_since)) -ge "$stable_seconds" ]; then
-      echo "wait-for-deploy: v${version} の新しいプロセスだけを ${stable_seconds} 秒以上観測し、正常に応答している。デプロイは完了した"
+      echo "wait-for-deploy: v${version} の新しいプロセスだけを ${stable_seconds} 秒以上観測し、正常に応答している。Coolify の判定期間を越えたので、デプロイは完了したとみなす"
       exit 0
     fi
   else
