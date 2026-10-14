@@ -74,7 +74,10 @@ remote_ref() {
 # 作業中のリポジトリの main とタグを push 済みの内容に揃える。push の内容には影響しない後処理なので、失敗しても止めない。
 sync_local() {
   local commit="$1" base="$2" local_tag local_main
-  local lg=(git -C "$repo_root" --no-replace-objects -c core.hooksPath=/dev/null -c core.fsmonitor=false)
+  # --no-lazy-fetch は、リポジトリの設定で origin を promisor remote にされたとき、欠けたオブジェクトを読む
+  # merge-base や update-ref が遅延取得を起こし、remote の設定 (ext:: や uploadpack) のコマンドを実行するのを防ぐ。
+  # これを知らない古い git ではここの git がすべて失敗し、ローカルへの反映を諦める警告だけが出る。
+  local lg=(git -C "$repo_root" --no-replace-objects --no-lazy-fetch -c core.hooksPath=/dev/null -c core.fsmonitor=false)
   g update-ref refs/release/commit "$commit"
   # mixed reset は作業ツリーに触れないので、準備したファイルや再実行までに加えた編集を失わない
   local recovery="main 上で git fetch --tags origin main && git reset refs/remotes/origin/main (作業ツリーは変わらず、stage だけが解除される)"
@@ -89,6 +92,18 @@ sync_local() {
     "${lg[@]}" update-ref "refs/tags/$tag" "$commit" "" || echo "release-publish: ローカルにタグ $tag を作れなかった。git fetch --tags で揃える。" >&2
   elif [ "$local_tag" != "$commit" ]; then
     echo "release-publish: ローカルのタグ $tag が $commit と違うコミットを指している。手で確認する。" >&2
+  fi
+
+  # 追跡ブランチも揃えないと、git status がリリースコミットの分だけ main を ahead と示し、fetch するまで反映を判断できない。
+  # 今の値がリリースコミットの祖先だと確かめられたときだけ進める。祖先関係を確かめられない (shallow clone など) ときや、
+  # 既に fetch して先へ進んでいるときは触らない。--no-deref は、追跡ブランチが別のブランチへの symbolic ref に
+  # 置き換えられていても、その先を書き換えないため。
+  local tracking
+  tracking=$("${lg[@]}" rev-parse --quiet --verify refs/remotes/origin/main || true)
+  if [ -n "$tracking" ] && [ "$tracking" != "$commit" ] &&
+    "${lg[@]}" merge-base --is-ancestor "$tracking" "$commit" 2>/dev/null; then
+    "${lg[@]}" update-ref --no-deref -m "release $tag" refs/remotes/origin/main "$commit" "$tracking" ||
+      echo "release-publish: refs/remotes/origin/main を $commit へ進められなかった。git fetch origin main で揃える。" >&2
   fi
 
   local_main=$("${lg[@]}" rev-parse --quiet --verify refs/heads/main || true)

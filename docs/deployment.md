@@ -14,7 +14,7 @@ ratatoskr を Coolify 上で動かし、GitHub Release の公開を契機に自�
 2. リポジトリに `https://github.com/AtefAndrus/ratatoskr` を指定し、ブランチは `main` にする。
 3. Build Pack に **Dockerfile** を選ぶ。
 4. Port は `3000` にする。
-5. Health Check は Dockerfile の `HEALTHCHECK` がそのまま使われる。Coolify 側で別途設定する場合はパス `/health`、ポート `3000` にする。
+5. Coolify の **Health Check** は無効のままにする。無効のとき Coolify は Dockerfile の `HEALTHCHECK` をそのまま使い、デプロイ後の確認の待ち時間もこれを前提にしている (「5. GitHub Release からの自動デプロイ」を参照)。
 
 ## 2. 永続ボリューム
 
@@ -54,7 +54,7 @@ SQLite に受信アカウントの認証情報、Web Push 鍵、監視対象、�
 
 ## 5. GitHub Release からの自動デプロイ
 
-`.github/workflows/deploy.yml` は Release の公開時に Coolify の Deploy Webhook を呼ぶ。
+`.github/workflows/deploy.yml` は Release の公開時に Coolify の Deploy Webhook を呼び、新しい版が本番で動き始めるまで待つ。
 
 1. Coolify のアプリ設定 **Webhooks** にある Deploy Webhook の URL を控える。形は `https://<Coolify のホスト>/api/v1/deploy?uuid=<アプリの UUID>&force=false` である。
 2. Coolify の **Security** → **API Tokens** で、権限に `deploy` を付けたトークンを発行する。トークンは作成時にしか表示されない。形は `67|...` のような文字列である。
@@ -65,7 +65,27 @@ SQLite に受信アカウントの認証情報、Web Push 鍵、監視対象、�
 | `COOLIFY_WEBHOOK` | Deploy Webhook の URL (`/api/v1/deploy?uuid=...` を含む) |
 | `COOLIFY_TOKEN` | `deploy` 権限の API トークン |
 
+1. 同じ画面の **Variables** に、本番の `/health` の URL を `PRODUCTION_HEALTH_URL` として登録する (例: `https://<ドメイン>/health`)。
+
 以後は GitHub Release を公開するとデプロイが走る。
+デプロイ API の成功は Coolify がデプロイ要求を受け付けたことしか示さず、Coolify は新しいコンテナのヘルスチェックが通らないと旧コンテナへ戻す。
+そのため workflow は続けて `scripts/wait-for-deploy.sh` を実行する。
+待つ版は Coolify がビルドする `main` の `package.json` から読む。
+workflow はデプロイ要求の直前に `/health` の `now` (サーバーの時刻) を記録する。
+`/health` が、その版で、起動時刻 (`startedAt`) が記録した時刻より後のプロセスだけを返し続け、180 秒たった時点で 200 を返したら成功する。
+比べる時刻はどちらもサーバーの時計なので、ランナーとの時計のずれは判定に入らない。
+ただし、サーバーの時計が大きく戻されないことを前提にしている。旧プロセスの起動後に、その稼働時間を超えて時計が戻されてから記録すると旧プロセスを新しいとみなし、記録の後に戻されると新しいプロセスを見分けられずに失敗する。
+前のデプロイがまだ終わらずに同じ版の候補と元のプロセスが重なっていても、どちらも記録より前に起動しているので、ロールバックで残ったプロセスを成功としない。
+ただし、記録の後に前のデプロイ要求が起動した同じ版の候補が、こちらの要求の失敗後に残った場合は成功とみなす。動いているのは待っている版なので、これは許容している。
+Coolify が戻すと決めた後、ログの取得などのリモートコマンドが長く止まって、戻すのが判定期間より大きく遅れた場合も、戻される前に成功とみなしうる。Coolify と同じホストへのコマンドが数分止まるのは障害時に限られるので、これも許容している。
+旧プロセスの応答や読めない応答を挟んだら待ち直し、ビルドを含めて 25 分以内に成功しなければ失敗する。
+デプロイ前の `/health` からサーバーの時刻を読めなかったときは、デプロイは起こすが、新旧のプロセスを見分けられないので確認は失敗にする。
+`now` を返さない応答を基準なしで進めるのは、`version` と `now` の欄を持たない旧版の `/health` の形をしている場合に限る。proxy のエラー本文などを旧版と取り違えないためである。
+待っている間に次のリリースの実行が始まったら、前の実行は取り消される (Coolify は main の先頭をビルドするので、前の版はデプロイされない)。
+180 秒の根拠は Coolify のロールバックの仕組みにある。Coolify は、アプリ設定の Health Check を無効にしている間、デプロイのたびに Dockerfile の `HEALTHCHECK` から自分のヘルスチェック設定 (start period、interval、retries) を取り込み、start period だけ待ってから interval ごとに retries 回、Docker の health 状態を見る。healthy を見たら旧コンテナを外すだけで戻さず、見られないまま回数を使い切ったら戻す。そのため戻すのは新しいコンテナの起動から start period + retries × interval 秒 (今の Dockerfile では 15 + 3 × 30 = 105 秒) までであり、2026-10-13 の失敗でもデプロイログの上でちょうど 105 秒で戻された。180 秒との差は、Coolify が毎回 Docker の状態を読むのにかかる時間を吸収する (2026-10-13 のログでは、秒単位の時刻の上で 3 回分が 1 秒以内に収まっていた)。`HEALTHCHECK` を延ばして 180 秒を超えるとテストが失敗するので、そのときは `STABLE_SECONDS` の既定値も延ばす。Coolify の Health Check は無効のままにする。有効にすると Coolify は画面に保存した値で判定し、Dockerfile から計算した期間とテストが当てはまらなくなる。
+確認の失敗はデプロイの失敗とは限らない (観測中に読めない応答が続いた、など)。
+失敗したときは、Coolify のデプロイログで、そのデプロイが完了したか (新しいコンテナがヘルスチェックを通り、旧コンテナが外されたか)、ヘルスチェックの失敗による戻しか、ビルドの失敗かを確かめる。
+`/health` を 1 回読んだだけでは、ロールバック判定の前の新しいコンテナを見ている場合があるので、切り替わったとはみなさない。
 workflow のログで応答が `302` かつ本文がログイン画面へのリダイレクトなら、`COOLIFY_WEBHOOK` が API ではなく管理画面の URL を指している。
 `401` ならトークンが無効か `deploy` 権限が無い。
 Secret を直したあとは、失敗した workflow を GitHub Actions の **Re-run jobs** で再実行すればよく、Release を作り直す必要はない。
