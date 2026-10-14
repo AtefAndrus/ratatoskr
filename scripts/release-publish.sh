@@ -91,6 +91,16 @@ sync_local() {
     echo "release-publish: ローカルのタグ $tag が $commit と違うコミットを指している。手で確認する。" >&2
   fi
 
+  # 追跡ブランチも揃えないと、git status がリリースコミットの分だけ main を ahead と示し、fetch するまで反映を判断できない。
+  # 既に先へ進んでいる (fetch 済みの) ときは戻さない。
+  local tracking
+  tracking=$("${lg[@]}" rev-parse --quiet --verify refs/remotes/origin/main || true)
+  if [ -n "$tracking" ] && [ "$tracking" != "$commit" ] &&
+    ! "${lg[@]}" merge-base --is-ancestor "$commit" "$tracking" 2>/dev/null; then
+    "${lg[@]}" update-ref -m "release $tag" refs/remotes/origin/main "$commit" "$tracking" ||
+      echo "release-publish: refs/remotes/origin/main を $commit へ進められなかった。git fetch origin main で揃える。" >&2
+  fi
+
   local_main=$("${lg[@]}" rev-parse --quiet --verify refs/heads/main || true)
   if [ "$local_main" != "$commit" ]; then
     if [ -n "$local_main" ] && [ "$local_main" != "$base" ] &&

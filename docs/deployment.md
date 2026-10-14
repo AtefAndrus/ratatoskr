@@ -54,7 +54,7 @@ SQLite に受信アカウントの認証情報、Web Push 鍵、監視対象、�
 
 ## 5. GitHub Release からの自動デプロイ
 
-`.github/workflows/deploy.yml` は Release の公開時に Coolify の Deploy Webhook を呼ぶ。
+`.github/workflows/deploy.yml` は Release の公開時に Coolify の Deploy Webhook を呼び、新しい版が本番で動き始めるまで待つ。
 
 1. Coolify のアプリ設定 **Webhooks** にある Deploy Webhook の URL を控える。形は `https://<Coolify のホスト>/api/v1/deploy?uuid=<アプリの UUID>&force=false` である。
 2. Coolify の **Security** → **API Tokens** で、権限に `deploy` を付けたトークンを発行する。トークンは作成時にしか表示されない。形は `67|...` のような文字列である。
@@ -65,7 +65,14 @@ SQLite に受信アカウントの認証情報、Web Push 鍵、監視対象、�
 | `COOLIFY_WEBHOOK` | Deploy Webhook の URL (`/api/v1/deploy?uuid=...` を含む) |
 | `COOLIFY_TOKEN` | `deploy` 権限の API トークン |
 
+1. 同じ画面の **Variables** に、本番の `/health` の URL を `PRODUCTION_HEALTH_URL` として登録する (例: `https://<ドメイン>/health`)。
+
 以後は GitHub Release を公開するとデプロイが走る。
+デプロイ API の成功は Coolify がデプロイ要求を受け付けたことしか示さず、Coolify は新しいコンテナのヘルスチェックが通らないと旧コンテナへ戻す。
+そのため workflow は続けて `scripts/wait-for-deploy.sh` を実行する。
+`/health` が `package.json` の版を返し、そのプロセスがデプロイ要求の後に起動して 180 秒動き続けたら成功、15 分以内にそうならなければ失敗する。
+180 秒は、新しいコンテナの起動から約 105 秒で旧コンテナへ戻された実例 (2026-10-13) に余裕を持たせた値である。
+失敗したときは Coolify のデプロイログで、ヘルスチェックの失敗による戻しか、ビルドの失敗かを確かめる。
 workflow のログで応答が `302` かつ本文がログイン画面へのリダイレクトなら、`COOLIFY_WEBHOOK` が API ではなく管理画面の URL を指している。
 `401` ならトークンが無効か `deploy` 権限が無い。
 Secret を直したあとは、失敗した workflow を GitHub Actions の **Re-run jobs** で再実行すればよく、Release を作り直す必要はない。

@@ -1,5 +1,6 @@
 import type { Client } from "discord.js";
 
+import packageJson from "../../package.json";
 import type { ReceiverStatus } from "../services/receiverSupervisor";
 import { logger } from "../utils/logger";
 
@@ -8,6 +9,8 @@ export interface HealthStatus {
   discord: { connected: boolean; ping: number | null };
   receivers: Array<Pick<ReceiverStatus, "label" | "autopushConnected" | "lastNotificationAt">>;
   uptime: number;
+  /** デプロイ後の確認で、新しい版のプロセスに切り替わったかを見分けるのに使う。 */
+  version: string;
 }
 
 export interface HttpServerOptions {
@@ -39,6 +42,7 @@ export function startHttpServer(options: HttpServerOptions): ReturnType<typeof B
             lastNotificationAt: status.lastNotificationAt,
           })),
           uptime: Math.floor((Date.now() - startedAt) / 1000),
+          version: packageJson.version,
         };
         return new Response(JSON.stringify(body), {
           status: connected ? 200 : 503,

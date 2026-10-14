@@ -11,13 +11,21 @@ permissions: {}
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Trigger Coolify Deployment
+        id: trigger
         env:
           COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         # Coolify の /api/v1/deploy は POST を要求する (GET は 200 で「POST に変わった」と返すだけでデプロイしない)
         run: |
+          echo "triggered_at=$(date +%s)" >> "$GITHUB_OUTPUT"
           response=$(curl -s -w "\n%{http_code}" \
             --request POST "$COOLIFY_WEBHOOK" \
             --header "Authorization: Bearer $COOLIFY_TOKEN" \
@@ -35,3 +43,15 @@ jobs:
             echo "Failed to trigger deployment"
             exit 1
           fi
+      # デプロイ API の成功は受け付けたことしか示さず、Coolify はヘルスチェックが通らないと旧コンテナへ戻す。
+      # Coolify のデプロイ状態を API で引かないのは、それに要る read 権限を deploy 用のトークンに足すことになるため。
+      - name: Wait for the new version to be serving
+        env:
+          HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
+          TRIGGERED_AT: ${{ steps.trigger.outputs.triggered_at }}
+        run: |
+          if [ -z "$HEALTH_URL" ]; then
+            echo "::error::repository variable PRODUCTION_HEALTH_URL is not set"; exit 1
+          fi
+          version=$(jq -er .version package.json)
+          bash scripts/wait-for-deploy.sh "$HEALTH_URL" "$version" "$TRIGGERED_AT"

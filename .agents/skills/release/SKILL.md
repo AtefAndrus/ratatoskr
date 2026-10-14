@@ -72,6 +72,6 @@ main の ruleset は必須ステータスチェックを課すが Admin ロー�
 ## Step 4: Verify
 
 1. スクリプトが最後に出力した Release の URL を開ける: `gh release view v<version>`
-2. Deploy workflow が成功している: `gh run list --workflow deploy.yml -L 1`
+2. Deploy workflow が成功している: `gh run list --workflow deploy.yml -L 1`。この workflow は Coolify にデプロイを起こしたあと、`/health` が新しい版のプロセスを返し、Coolify のロールバック判定を越えて動き続けるまで待つ (`scripts/wait-for-deploy.sh`)。失敗していれば、Coolify がヘルスチェックの失敗で旧コンテナへ戻したか、新しい版に切り替わらなかった。Coolify のデプロイログを見て原因を直し、workflow を再実行する。
 3. イメージ公開の workflow が成功している: `gh run list --workflow publish-image.yml -L 1`
 4. Release の URL をユーザーに報告する
