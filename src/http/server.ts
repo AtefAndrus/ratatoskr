@@ -11,8 +11,13 @@ export interface HealthStatus {
   uptime: number;
   /** デプロイ後の確認で、新しい版のプロセスに切り替わったかを見分けるのに使う。 */
   version: string;
-  /** プロセスの起動時刻。デプロイ後の確認で、同じ版を出し直したときの新旧のプロセスを見分けるのに使う。 */
+  /**
+   * HTTP サーバーの起動時刻。DB の初期化と Discord へのログインの後なので、プロセスの起動より遅い。
+   * デプロイ後の確認は、これがデプロイ前に読んだ `now` より後のプロセスだけを新しいとみなす。遅い側にずれても誤判定しない。
+   */
   startedAt: string;
+  /** 応答した時点のサーバーの時刻。デプロイ後の確認が、ランナーの時計を使わずに新旧のプロセスを見分ける基準にする。 */
+  now: string;
 }
 
 export interface HttpServerOptions {
@@ -46,6 +51,7 @@ export function startHttpServer(options: HttpServerOptions): ReturnType<typeof B
           uptime: Math.floor((Date.now() - startedAt) / 1000),
           version: packageJson.version,
           startedAt: new Date(startedAt).toISOString(),
+          now: new Date().toISOString(),
         };
         return new Response(JSON.stringify(body), {
           status: connected ? 200 : 503,

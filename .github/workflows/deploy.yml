@@ -27,7 +27,8 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - name: Record the serving process
+      # デプロイを起こす直前のサーバーの時刻を記録し、それより後に起動したプロセスだけを新しいとみなす
+      - name: Record the server time before deploying
         id: before
         env:
           HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
@@ -36,14 +37,14 @@ jobs:
             echo "::error::repository variable PRODUCTION_HEALTH_URL is not set"; exit 1
           fi
           # 読めなくてもデプロイは起こす (本番が落ちているときの復旧を妨げない)。確認は次の step で失敗にする
-          if started_at=$(bash scripts/wait-for-deploy.sh --snapshot "$HEALTH_URL"); then
+          if baseline=$(bash scripts/wait-for-deploy.sh --snapshot "$HEALTH_URL"); then
             echo "known=true" >> "$GITHUB_OUTPUT"
           else
-            started_at=""
+            baseline=""
             echo "known=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "started_at=$started_at" >> "$GITHUB_OUTPUT"
-          echo "serving process started at: ${started_at:-unknown}"
+          echo "baseline=$baseline" >> "$GITHUB_OUTPUT"
+          echo "server time before deploying: ${baseline:-unknown}"
       - name: Trigger Coolify Deployment
         env:
           COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
@@ -72,7 +73,7 @@ jobs:
       - name: Wait for the new version to be serving
         env:
           HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
-          PREVIOUS_STARTED_AT: ${{ steps.before.outputs.started_at }}
+          BASELINE: ${{ steps.before.outputs.baseline }}
           PREVIOUS_KNOWN: ${{ steps.before.outputs.known }}
         run: |
           if [ "$PREVIOUS_KNOWN" != true ]; then
@@ -80,4 +81,4 @@ jobs:
             exit 1
           fi
           version=$(jq -er .version package.json)
-          bash scripts/wait-for-deploy.sh "$HEALTH_URL" "$version" "$PREVIOUS_STARTED_AT"
+          bash scripts/wait-for-deploy.sh "$HEALTH_URL" "$version" "$BASELINE"
