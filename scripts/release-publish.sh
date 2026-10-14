@@ -74,7 +74,10 @@ remote_ref() {
 # 作業中のリポジトリの main とタグを push 済みの内容に揃える。push の内容には影響しない後処理なので、失敗しても止めない。
 sync_local() {
   local commit="$1" base="$2" local_tag local_main
-  local lg=(git -C "$repo_root" --no-replace-objects -c core.hooksPath=/dev/null -c core.fsmonitor=false)
+  # --no-lazy-fetch は、リポジトリの設定で origin を promisor remote にされたとき、欠けたオブジェクトを読む
+  # merge-base や update-ref が遅延取得を起こし、remote の設定 (ext:: や uploadpack) のコマンドを実行するのを防ぐ。
+  # これを知らない古い git ではここの git がすべて失敗し、ローカルへの反映を諦める警告だけが出る。
+  local lg=(git -C "$repo_root" --no-replace-objects --no-lazy-fetch -c core.hooksPath=/dev/null -c core.fsmonitor=false)
   g update-ref refs/release/commit "$commit"
   # mixed reset は作業ツリーに触れないので、準備したファイルや再実行までに加えた編集を失わない
   local recovery="main 上で git fetch --tags origin main && git reset refs/remotes/origin/main (作業ツリーは変わらず、stage だけが解除される)"
