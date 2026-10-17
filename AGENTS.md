@@ -18,7 +18,7 @@ bun test             # bun:test
 
 - 起動には `DISCORD_TOKEN` と `DISCORD_APPLICATION_ID` が要る。受信用 X アカウントは `bun run cli receiver:add <label>` で SQLite に入れる。
 - 実 API に触る動作確認は、受信アカウントの Cookie と Discord Token を環境変数で渡して `bun dev` を短時間動かし、`/health` と `/admin/*` で観測する。
-- 稼働中の Bot を調べるときは `bun run cli admin` を使う。どのエンドポイントがどの問いに答えるかは [docs/admin-api.md](docs/admin-api.md) の「よくある調査」にある。
+- 稼働中の Bot を調べるときは `bun run cli admin` を使う。どのエンドポイントがどの問いに答えるかは [docs/admin-api.md](docs/admin-api.md) の「よくある調査」にある。投稿が届かない、遅れたといった報告を調べる手順は `production-investigation` skill (`.agents/skills/production-investigation/SKILL.md`) にある。
 
 ## Conventions that differ from defaults
 
