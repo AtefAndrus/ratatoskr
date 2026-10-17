@@ -24,11 +24,11 @@
   },
   "dependencies": {
     "discord.js": "14.27.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "bun-types": "1.4.2",
-    "lefthook": "2.1.17",
+    "lefthook": "2.2.2",
     "markdownlint-cli2": "0.23.3",
     "oxfmt": "0.72.0",
     "oxlint": "1.87.0",
