@@ -1,7 +1,6 @@
 ---
 name: release
-description: Run the ratatoskr release process when explicitly invoked.
-disable-model-invocation: true
+description: Run the ratatoskr release process when cutting a new version (e.g. `/release 0.8.0`).
 argument-hint: "[version e.g. 0.7.0]"
 ---
 
