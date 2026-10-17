@@ -104,7 +104,7 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 | `observations.count` と `lastFetchedAt` | `postIds` のどれかに一致した観測投稿の行数と、それを含む観測の最後の取得時刻。投稿は周回ごとに取り直されるので行数は大きくなる |
 | `observations.sightings` | 観測投稿の行を古い順に `limit` 件。`isNew` は受信アカウントと監視対象の組での初出 (保持期間内)。`isTargetAuthor` が 0 の行 (他人の投稿や会話モジュールの一部) は配信の対象にならない |
 | `routes[].queue` | その投稿先のキュー行。`state` が `sent` なら `discordMessageId` に送ったメッセージがある。`source` は最後にこの行へ投入した経路で、送信に失敗した行を別の経路が投入し直すと書き換わる |
-| `routes[].queue[].attempts` | キュー行の投入直後 1 時間と最終更新直前 1 時間の送信履歴 (`sent`、`failed`、`skipped_duplicate`)。あいだの試行は省く。キュー行の `attemptCount` は送信に取りかかった回数で、`skipped_duplicate` を含まず、送信中に停止して結果を記録できなかった回も含む。キュー行の `lastError` は再試行のたびに消えるので、遅れた理由はここで見る |
+| `routes[].queue[].attempts` | キュー行の投入から最終更新までのうち、投入直後 1 時間と最終更新直前 1 時間の送信履歴 (`sent`、`failed`、`skipped_duplicate`)。最終更新より後に別の経路が記録した `skipped_duplicate` は含まない。あいだの試行は省く。キュー行の `attemptCount` は送信に取りかかった回数で、`skipped_duplicate` を含まず、送信中に停止して結果を記録できなかった回も含む。キュー行の `lastError` は再試行のたびに消えるので、遅れた理由はここで見る |
 
 `attempts` は、キュー行の今の配信元と、この投稿の通知と観測に結びつく履歴だけを拾う。
 送信に失敗した行を別の経路が投入し直すと配信元が書き換わるので、元の配信元の通知や観測が保持期間で消えていると、それまでの失敗は `attempts` に出ない。
