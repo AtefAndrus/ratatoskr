@@ -59,7 +59,7 @@ URL の `/status/` の後ろの数字を投稿 ID として `bun run cli admin /
 | `queue[].state` が `pending`、`sending`、`failed` | 送信の成功が DB に確定していない (Discord が受理したのに応答を受け取れなかった場合もこの形になる) | `attempts` の `error`、`/admin/backlog` の `queue`、`/admin/logs?level=warn` |
 | 監視対象が見ていたのに、その投稿先にキュー行が無い | 投稿先が弾いたか、観測の保存とキューへの投入のあいだでプロセスが止まった | 文書の弾く条件を投稿先の設定と 1 つずつ照らし、当たった条件を名指しする。どれにも当たらなければ、観測の時刻の直後に `/health` の `startedAt` が来ていないかを見る |
 | 監視対象が見ていない | どの経路も配信の対象として見ていない | 通知の `targetHandle` が `null` なら監視対象を決められなかった。そうでなければ手順 3 |
-| 二重に届いたという報告 | 投稿先が 2 つあるか、同じ投稿が別の ID でキューに入ったか、再送した | 別の監視対象の投稿先が同じチャンネルを指して両方 `sent` か (リポスト)。同じ投稿先に `postId` の違う `sent` のキュー行が 2 つあれば、経路ごとに別の ID で投入された (リポストの通知が自身の ID を持たない場合など)。1 つだけなら再送を疑う。`attempts` の `failed` の後の `sent` (受理されたのに応答を受け取れなかった送信の再試行) や、`/health` の `startedAt` の前後の送信 (受理後に DB を更新する前の停止) が手がかりになる。ただし Discord への要求を送信ライブラリが内部で再試行した分は記録に残らないので、手がかりが無くても再送でないとは決めない |
+| 二重に届いたという報告 | 投稿先が 2 つあるか、同じ投稿が別の ID でキューに入ったか、再送した | 別の監視対象の投稿先が同じチャンネルを指して両方 `sent` か (リポスト)。リポストなら元投稿の ID で引き直す (リポスト自体の ID からは、元投稿の ID で投入された行が見つからない)。同じ投稿先に `postId` の違う `sent` のキュー行が 2 つあれば、同じ投稿が別の ID で投入された (リポストの通知が自身の ID を持たない場合など)。どの通知や観測から投入されたかは `queue[].source` と `notifications`、`observations` で照らす。1 つだけなら再送を疑う。`attempts` の `failed` の後の `sent` (受理されたのに応答を受け取れなかった送信の再試行) や、`/health` の `startedAt` の前後の送信 (受理後に DB を更新する前の停止) が手がかりになる。ただし Discord への要求を送信ライブラリが内部で再試行した分は記録に残らないので、手がかりが無くても再送でないとは決めない |
 
 `/admin/posts` が 404 を返すのは、動作中の版にまだこのエンドポイントが無いときである。
 そのときは `/admin/notifications?limit=1000` を投稿 ID (`postId` か `notificationPostId`) で絞る。
@@ -74,7 +74,7 @@ URL の `/status/` の後ろの数字を投稿 ID として `bun run cli admin /
 - 監視対象を担当する受信アカウント (`/admin/metrics` の `receivers[].internalPoll.targets`)。
 - その受信アカウントの認証 (`/admin/observations?errors=1` の `responseStatus` と `error`)。同じ受信アカウントが同じ時間帯にほかの対象では成功しているなら、Cookie の失効とは決めず、その対象と受信アカウントの関係 (非公開化、ブロックなど) を疑う。
 - 取得の間隔 (`/admin/observations?target=<handle>&limit=1000` の `receiverLabel` ごとの `fetchedAt`)。
-- Web Push の受信 (`/health` の `autopushConnected` と `lastNotificationAt`、`/admin/notifications`)。Web Push は全受信アカウントが全対象の通知を受けるので、ある受信アカウントで 1 つの対象の通知だけが止まった理由は管理 API からは分からない。そのときは X 側でその受信アカウントの通知設定を確かめるよう提案する。ある受信アカウントで全対象の通知が止まり、同じころから内部 GraphQL も 401 なら、同じ資格情報の拒否によると推測してよい (推測と明示する)。
+- Web Push の受信 (`/health` の `autopushConnected` と `lastNotificationAt`、`/admin/notifications`)。Web Push は全受信アカウントが全対象の通知を受けるので、ある受信アカウントで 1 つの対象の通知だけが止まったときは、まず `/admin/logs` にその受信アカウントとその対象の `Target configuration failed` が無いかを見る。無ければ理由は管理 API からは分からないので、X 側でその受信アカウントの通知設定を確かめるよう提案する。ある受信アカウントで全対象の通知が止まり、同じころから内部 GraphQL も 401 なら、同じ資格情報の拒否によると推測してよい (推測と明示する)。
 
 Web Push と内部 GraphQL は別々に投稿を拾うので、どちらも見ていないときは経路ごとに落ちた理由を書く。
 
