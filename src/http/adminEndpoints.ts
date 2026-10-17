@@ -181,30 +181,64 @@ export function createAdminRouter(
         if (!/^\d+$/.test(postId)) return jsonError(400, "Invalid post id");
         const limit = readLimit(url);
         if (limit instanceof Response) return limit;
+        // リポストは通知主体側の ID で配信されるので、通知とキュー行からその ID を拾って引き直す。
         const notifications = deps.notifications.listByPostId(postId);
-        const postIds = [
+        const queue = deps.deliveries.listQueueByPostIds([
           ...new Set([postId, ...notifications.flatMap((n) => n.notificationPostId ?? [])]),
+        ]);
+        const postIds = [
+          ...new Set([
+            postId,
+            ...notifications.flatMap((n) => n.notificationPostId ?? []),
+            ...queue.map((entry) => entry.postId),
+          ]),
         ];
         const observations = deps.observations.listPostSightings(postIds, limit);
-        const queue = deps.deliveries.listQueueByPostIds(postIds);
         const targetIds = new Set([
           ...notifications.flatMap((n) => n.targetId ?? []),
           ...observations.targetIds,
           ...queue.map((entry) => entry.targetId),
         ]);
-        const postedAtMs = xSnowflakeTimestampMs(postId);
+        // 他の対象のタイムラインに会話の一部として出た投稿でも、投稿者が監視対象ならその投稿先を並べる。
+        const authorHandles = new Set(
+          [
+            ...notifications.flatMap((n) => n.authorHandle ?? []),
+            ...observations.authorHandles,
+          ].map((handle) => handle.toLowerCase()),
+        );
+        const notificationIds = notifications.map((n) => n.id);
         return json({
           postId,
-          postedAt: postedAtMs === null ? null : new Date(postedAtMs).toISOString(),
-          postIds,
+          postIds: postIds.map((id) => {
+            const postedAtMs = xSnowflakeTimestampMs(id);
+            return {
+              postId: id,
+              postedAt: postedAtMs === null ? null : new Date(postedAtMs).toISOString(),
+            };
+          }),
           notifications,
-          observations,
+          observations: {
+            count: observations.count,
+            lastFetchedAt: observations.lastFetchedAt,
+            sightings: observations.sightings,
+          },
           routes: deps.routes
             .listAll()
-            .filter((route) => targetIds.has(route.targetId))
+            .filter(
+              (route) =>
+                targetIds.has(route.targetId) || authorHandles.has(route.handle.toLowerCase()),
+            )
             .map((route) => ({
               ...route,
-              queue: queue.filter((entry) => entry.routeId === route.id),
+              queue: queue
+                .filter((entry) => entry.routeId === route.id)
+                .map((entry) => ({
+                  ...entry,
+                  attempts: deps.deliveries.listAttemptsForQueueEntry(entry, {
+                    notificationIds,
+                    postIds,
+                  }),
+                })),
             })),
         });
       },

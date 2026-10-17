@@ -70,6 +70,16 @@ export interface QueueEntryView {
   updatedAt: string;
 }
 
+export interface DeliveryAttemptView {
+  id: number;
+  source: DeliverySource;
+  sourceRecordId: number;
+  attemptedAt: string;
+  status: DeliveryStatus;
+  discordMessageId: string | null;
+  error: string | null;
+}
+
 export class DeliveryRepository {
   constructor(private readonly db: Database) {}
 
@@ -229,6 +239,7 @@ export class DeliveryRepository {
       .run({ id, error, failedAt });
   }
 
+  /** リポストの行は post_id がリポスト自体の ID で、post_url が元投稿を指すので、URL の末尾でも引く。 */
   listQueueByPostIds(postIds: readonly string[]): QueueEntryView[] {
     return this.db
       .query(
@@ -241,9 +252,49 @@ export class DeliveryRepository {
                 queue.created_at AS queuedAt, queue.updated_at AS updatedAt
          FROM delivery_queue AS queue
          WHERE queue.post_id IN (SELECT value FROM json_each($postIds))
+            OR EXISTS (
+              SELECT 1 FROM json_each($postIds) AS ids
+              WHERE substr(queue.post_url, -length('/status/' || ids.value)) = '/status/' || ids.value
+            )
          ORDER BY queue.id`,
       )
       .all({ postIds: JSON.stringify(postIds) }) as QueueEntryView[];
+  }
+
+  /**
+   * キュー行は再試行のたびに last_error を消し、移行前の送信済み行は discord_message_id を持たないので、送信履歴も添える。
+   * 履歴は (source, source_record_id) の索引が無いため、キュー行の投入から最終更新までの時刻範囲で attempted_at の索引から絞る。
+   */
+  listAttemptsForQueueEntry(
+    entry: Pick<QueueEntryView, "routeId" | "queuedAt" | "updatedAt">,
+    records: { notificationIds: readonly number[]; postIds: readonly string[] },
+  ): DeliveryAttemptView[] {
+    return this.db
+      .query(
+        `SELECT deliveries.id, deliveries.source, deliveries.source_record_id AS sourceRecordId,
+                deliveries.attempted_at AS attemptedAt, deliveries.status,
+                deliveries.discord_message_id AS discordMessageId, deliveries.error
+         FROM discord_deliveries AS deliveries
+         WHERE deliveries.attempted_at BETWEEN $from AND $to
+           AND deliveries.route_id = $routeId
+           AND (
+             (deliveries.source = 'webpush'
+               AND deliveries.source_record_id IN (SELECT value FROM json_each($notificationIds)))
+             OR (deliveries.source = 'internal_graphql'
+               AND deliveries.source_record_id IN (
+                 SELECT posts.id FROM internal_graphql_observation_posts AS posts
+                 WHERE posts.post_id IN (SELECT value FROM json_each($postIds))
+               ))
+           )
+         ORDER BY deliveries.id`,
+      )
+      .all({
+        from: entry.queuedAt,
+        to: entry.updatedAt,
+        routeId: entry.routeId,
+        notificationIds: JSON.stringify(records.notificationIds),
+        postIds: JSON.stringify(records.postIds),
+      }) as DeliveryAttemptView[];
   }
 
   queueCounts(): DeliveryQueueCounts {

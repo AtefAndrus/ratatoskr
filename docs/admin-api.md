@@ -90,17 +90,31 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 
 ## 投稿 1 件をたどる
 
-`/admin/posts/<postId>` は、指定した投稿 ID を Web Push の通知 (`postId` または `notificationPostId` が一致するもの) と内部 GraphQL の観測から探し、関係する監視対象の投稿先をすべて、その投稿先でのキュー行と並べて返す。
-リポストの通知は URI が元投稿を指すので、元投稿の ID で引いても通知からリポスト自体の ID を拾い、`postIds` に並べてその ID でも観測とキューを引く。
-`postedAt` は投稿 ID の Snowflake から復元した時刻である。
+`/admin/posts/<postId>` は、指定した投稿 ID を Web Push の通知 (`postId` または `notificationPostId` が一致するもの)、キュー、内部 GraphQL の観測から探し、関係する監視対象の投稿先をすべて、その投稿先でのキュー行と並べて返す。
+関係する監視対象は、通知、観測、キュー行の対象に加え、通知か観測の投稿者が監視対象ならその対象も含む。
+リポストはリポスト自体の ID で配信されるので、元投稿の ID で引いても、通知の `notificationPostId` と、元投稿を URL に持つキュー行からリポストの ID を拾い、`postIds` に並べてその ID でも観測とキューを引く。
+通知が保持期間で消え、キュー行も無いリポスト (投稿先の設定で弾かれたもの) は、元投稿の ID からはたどれない。
+その場合は `/admin/observations?target=<handle>` の観測を `/admin/observations/<id>` で開き、`referencedPostIdsJson` に元投稿を持つ行の `postId` で引き直す。
 
 | フィールド | 読み方 |
 | ---------- | ------ |
+| `postIds[]` | 引いた ID と、その ID の Snowflake から復元した `postedAt` |
 | `notifications` | 受信した Web Push 通知。空なら Web Push では届いていないか、保持期間で消えている |
-| `observations.count` と `lastFetchedAt` | 内部 GraphQL がこの投稿を含むページを取得した回数と最後の時刻。投稿は周回ごとに取り直されるので回数は大きくなる |
-| `observations.sightings` | 観測の行を古い順に `limit` 件。`isNew` は受信アカウントごとの初出、`isTargetAuthor` が 0 の行 (他人の投稿や会話モジュールの一部) は配信の対象にならない |
-| `routes[].queue` | その投稿先のキュー行。`state` が `sent` なら `discordMessageId` に送ったメッセージがある。`source` は配信権を先に取った経路 |
+| `observations.count` と `lastFetchedAt` | `postIds` のどれかに一致した観測投稿の行数と、それを含む観測の最後の取得時刻。投稿は周回ごとに取り直されるので行数は大きくなる |
+| `observations.sightings` | 観測投稿の行を古い順に `limit` 件。`isNew` は受信アカウントと監視対象の組での初出 (保持期間内)。`isTargetAuthor` が 0 の行 (他人の投稿や会話モジュールの一部) は配信の対象にならない |
+| `routes[].queue` | その投稿先のキュー行。`state` が `sent` なら `discordMessageId` に送ったメッセージがある。`source` は最後にこの行へ投入した経路で、送信に失敗した行を別の経路が投入し直すと書き換わる |
+| `routes[].queue[].attempts` | キュー行の投入から最終更新までのあいだの送信履歴 (`sent`、`failed`、`skipped_duplicate`)。キュー行の `lastError` は再試行のたびに消えるので、遅れた理由はここで見る |
+
+キューが導入される前に送った投稿の行は `discordMessageId` を持たず、投入時刻と最終更新時刻が同じなので `attempts` も空になる。
 
 キュー行の無い投稿先は、送る前に弾かれたか、どの経路もその投稿を配信対象として見ていない。
-弾く条件は `routes[]` の `enabled`、`kinds`、`mediaFilter` と、`createdAt` が `postedAt` より後であることである。
-弾いた投稿は個別には記録せず、件数だけが `/admin/metrics` の `delivery.filtered` 系カウンタに残る。
+弾く条件は次のとおりで、どれも投稿先ごとの記録を残さない。
+
+- `routes[].enabled` が false である。
+- `routes[].kinds` が投稿の種別を許していない。種別は観測の `typesJson` か、通知の投稿者と監視対象の違い (違えばリポスト) から読む。
+- `routes[].mediaFilter` が `photo` で、投稿に画像が無いか、画像の有無を判定できなかった。
+- 投稿時刻が `routes[].createdAt` より前である。比べる時刻は配信に使った ID のもので、リポストならリポスト自体の時刻になる。内部 GraphQL は観測の `createdAt` を使い、無いときと Web Push では `postIds[].postedAt` を使う。
+- 停止中投稿の補完で、投稿が `/admin/backlog` の `notBefore` より前である。
+
+`/admin/metrics` の `delivery.filtered` 系カウンタは、種別とメディアで弾いた件数のうち初出の分だけを数える。
+投稿時刻と `enabled` で弾いた分は数えないので、カウンタが増えていないことは弾かれていない証拠にならない。

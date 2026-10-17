@@ -257,7 +257,10 @@ export class InternalGraphqlRepository {
       .all({ observationId }) as Array<Record<string, unknown>>;
   }
 
-  /** 投稿は周回ごとに取り直されて観測の数だけ行があるので、件数と最終時刻は全体から、行は古い順に limit 件だけ返す。 */
+  /**
+   * 投稿は周回ごとに取り直されて観測の数だけ行があるので、件数と最終時刻は全体から、行は古い順に limit 件だけ返す。
+   * リポストの元投稿 ID からは引かない。referenced_post_ids_json には索引が無く、全行を走査することになるため。
+   */
   listPostSightings(
     postIds: readonly string[],
     limit: number,
@@ -265,18 +268,25 @@ export class InternalGraphqlRepository {
     count: number;
     lastFetchedAt: string | null;
     targetIds: number[];
+    authorHandles: string[];
     sightings: PostSightingView[];
   } {
     const params = { postIds: JSON.stringify(postIds) };
     const summary = this.db
       .query(
         `SELECT count(*) AS count, max(observations.fetched_at) AS lastFetchedAt,
-                json_group_array(DISTINCT observations.target_id) AS targetIdsJson
+                json_group_array(DISTINCT observations.target_id) AS targetIdsJson,
+                json_group_array(DISTINCT posts.author_handle) AS authorHandlesJson
          FROM internal_graphql_observation_posts AS posts
          JOIN internal_graphql_observations AS observations ON observations.id = posts.observation_id
          WHERE posts.post_id IN (SELECT value FROM json_each($postIds))`,
       )
-      .get(params) as { count: number; lastFetchedAt: string | null; targetIdsJson: string };
+      .get(params) as {
+      count: number;
+      lastFetchedAt: string | null;
+      targetIdsJson: string;
+      authorHandlesJson: string;
+    };
     const sightings = this.db
       .query(
         `SELECT posts.id, posts.observation_id AS observationId, posts.post_id AS postId,
@@ -300,6 +310,9 @@ export class InternalGraphqlRepository {
       lastFetchedAt: summary.lastFetchedAt,
       targetIds: (JSON.parse(summary.targetIdsJson) as Array<number | null>).filter(
         (id): id is number => id !== null,
+      ),
+      authorHandles: (JSON.parse(summary.authorHandlesJson) as Array<string | null>).filter(
+        (handle): handle is string => handle !== null,
       ),
       sightings,
     };
