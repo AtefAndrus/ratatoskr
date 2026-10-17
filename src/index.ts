@@ -27,10 +27,13 @@ import { ReceiverSupervisor } from "./services/receiverSupervisor";
 import { WatchService } from "./services/watchService";
 import { logger } from "./utils/logger";
 import { metrics } from "./utils/metrics";
-import { startStallWatch } from "./utils/stallWatch";
+import { noteActivity, startStallWatch } from "./utils/stallWatch";
 import { InternalGraphqlConfigurationProvider } from "./x/internalGraphql";
 
 async function bootstrap(): Promise<void> {
+  // DB を開く処理や HTTP サーバーの起動前の停止も捉えるよう、最初に監視を始める。
+  const abortController = new AbortController();
+  startStallWatch(abortController.signal);
   const config = loadConfigFromEnvFiles();
   logger.info("Configuration loaded", {
     nodeEnv: config.nodeEnv,
@@ -38,6 +41,7 @@ async function bootstrap(): Promise<void> {
     adminAlerts: config.adminAlertChannelId !== undefined,
   });
 
+  noteActivity("db.open");
   const db = openDatabase(config.databasePath);
   metrics.attach({ databasePath: config.databasePath });
   const receivers = new ReceiverRepository(db, config.xWebBearerToken);
@@ -56,6 +60,7 @@ async function bootstrap(): Promise<void> {
   metrics.attach({ client });
   const postSender = new DiscordChannelPostSender(client);
   const embedRepair = new EmbedRepairService(postSender);
+  noteActivity("delivery.recoverSending");
   const delivery = new DeliveryService(routes, deliveries, postSender, guildSettings, embedRepair);
   const supervisor = new ReceiverSupervisor({
     receivers,
@@ -65,9 +70,10 @@ async function bootstrap(): Promise<void> {
     observations,
     backlog,
     delivery,
-    internalGraphqlConfiguration: new InternalGraphqlConfigurationProvider((exchange) =>
-      exchanges.record({ ...exchange, receiverId: null, requestSummaryJson: null }),
-    ),
+    internalGraphqlConfiguration: new InternalGraphqlConfigurationProvider((exchange) => {
+      noteActivity(`exchanges.record ${exchange.source}`);
+      return exchanges.record({ ...exchange, receiverId: null, requestSummaryJson: null });
+    }),
     internalPollEnabled: config.internalPollEnabled,
     ...(config.adminAlertChannelId === undefined
       ? {}
@@ -104,8 +110,6 @@ async function bootstrap(): Promise<void> {
     }),
   });
 
-  const abortController = new AbortController();
-  startStallWatch(abortController.signal);
   const backgroundTasks = [
     supervisor.run(abortController.signal),
     delivery.run(abortController.signal),

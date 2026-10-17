@@ -155,6 +155,7 @@ export class InternalPollCollector {
       const nowMs = Date.now();
       const now = new Date(nowMs).toISOString();
       const leaseUntil = new Date(nowMs + BACKLOG_LEASE_MS).toISOString();
+      noteActivity(`backlog.acquire ${this.deps.receiverLabel}/${target.handle}`);
       const progress = this.deps.backlog.acquire(target.id, this.deps.receiverId, now, leaseUntil);
       if (progress !== null && progress.nextCursor !== null) {
         return await this.pollTarget(target, signal, progress.nextCursor, progress.notBefore);
@@ -320,6 +321,7 @@ export async function deliverNewInternalPosts(input: {
       reobserved: !post.isNew,
     });
   }
+  noteActivity(`delivery.deliverBatch ${input.target.handle}`);
   const attempt = await input.delivery.deliverBatch(
     deliverablePosts,
     input.attemptedAt,

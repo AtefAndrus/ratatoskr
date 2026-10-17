@@ -243,6 +243,7 @@ export class DeliveryService {
   }
 
   private async drainReady(includeFailed: boolean): Promise<void> {
+    noteActivity("delivery.listReadyIds");
     const readyIds = this.deliveries.listReadyIds(includeFailed);
     await this.sendReadyIds(readyIds);
   }
