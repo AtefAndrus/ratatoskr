@@ -37,12 +37,13 @@ bun -e 'import { loadEnvFile } from "./src/config"; loadEnvFile(); console.log(n
 通知、観測、送信履歴の行は `RETENTION_DAYS` (既定 30 日) で消え、生応答本文は `RAW_RETENTION_DAYS` (既定 1 日) で消える。
 キュー行、`delivery_claims`、補完の進捗は保持期間では消えない。
 
-コードを根拠に引くときは、`git fetch --tags` のあと `git diff v<version> HEAD -- <files>` で動作中の版と見比べ、差分があればタグの版を引用する。
+コードを根拠に引くときは、`git fetch --tags` のあと `git diff v<version> -- <files>` で動作中の版と作業ツリーを見比べ、差分があればタグの版 (`git show v<version>:<file>`) を引用する。
 
 ## 2. 投稿 1 件をたどる
 
 URL の `/status/` の後ろの数字を投稿 ID として `bun run cli admin /admin/posts/<id> "limit=1000"` を叩く。
-観測の行は全監視対象をまとめて古い順に `limit` 件だけ返るので、既定の 50 件では調べたい対象の観測が欠けることがある。
+観測の行は全監視対象をまとめて古い順に `limit` 件だけ返る。
+`observations.count` が `sightings` の件数より多いときは、調べたい対象の観測が欠けている可能性があるので、`/admin/observations?target=<handle>&limit=1000` から投稿時刻より後の観測を選び、`/admin/observations/<id>` の `posts` で補う。補いきれなければ、その対象が見ていたかは判断できないと書く。
 応答の読み方と、投稿先が投稿を弾く条件は `docs/admin-api.md` の「投稿 1 件をたどる」にある。
 `routes` はすべての投稿先を返すので、`routes[].handle` で調べたい監視対象の投稿先を選ぶ。
 
@@ -58,7 +59,7 @@ URL の `/status/` の後ろの数字を投稿 ID として `bun run cli admin /
 | `queue[].state` が `pending`、`sending`、`failed` | まだ送れていない | `attempts` の `error`、`/admin/backlog` の `queue`、`/admin/logs?level=warn` |
 | 監視対象が見ていたのに、その投稿先にキュー行が無い | 投稿先が弾いたか、観測の保存とキューへの投入のあいだでプロセスが止まった | 文書の弾く条件を投稿先の設定と 1 つずつ照らし、当たった条件を名指しする。どれにも当たらなければ、観測の時刻の直後に `/health` の `startedAt` が来ていないかを見る |
 | 監視対象が見ていない | どの経路も配信の対象として見ていない | 通知の `targetHandle` が `null` なら監視対象を決められなかった。そうでなければ手順 3 |
-| 二重に届いたという報告 | 投稿先が 2 つあるか、再送した | 別の監視対象の投稿先が同じチャンネルを指して両方 `sent` か (リポスト)。1 つだけなら再送を疑う。Discord が受理したのに応答を受け取れなかった送信は `failed` と記録されて再試行されるので、`attempts` に `failed` の後の `sent` がある。Discord の受理後に DB を更新する前にプロセスが止まった場合は、`attempts` に `sent` が 2 件残るか、最初の送信が記録に残らないので、`/health` の `startedAt` と送信時刻も比べる |
+| 二重に届いたという報告 | 投稿先が 2 つあるか、再送した | 別の監視対象の投稿先が同じチャンネルを指して両方 `sent` か (リポスト)。1 つだけなら再送を疑う。`attempts` の `failed` の後の `sent` (受理されたのに応答を受け取れなかった送信の再試行) や、`/health` の `startedAt` の前後の送信 (受理後に DB を更新する前の停止) が手がかりになる。ただし Discord への要求を送信ライブラリが内部で再試行した分は記録に残らないので、手がかりが無くても再送でないとは決めない |
 
 `/admin/posts` が 404 を返すのは、動作中の版にまだこのエンドポイントが無いときである。
 そのときは `/admin/notifications?limit=1000` を投稿 ID (`postId` か `notificationPostId`) で絞る。
@@ -83,8 +84,8 @@ Web Push と内部 GraphQL は別々に投稿を拾うので、どちらも見�
 - 宛先の host と動作中の版を書く。
 - 記録が無いことを、起きなかった証拠にしない。保持期間、前回のプロセス、弾き条件のどれで記録が無いのかを書き、判断できないなら「判断できない」と書く。
 - 届かなかった投稿については (届いた投稿には不要)、直した後に送られるかを次の順に判定して書く。
-  1. その投稿先のキュー行が `pending` か `failed` なら、取得の状況に関係なく 30 秒ごとの再試行で送られる (`src/services/deliveryService.ts` の `run`)。`sending` は送信中で、その試行の結果を待つ。どちらも原因を直せば送られるので、手で貼るよう案内しない。
-  2. キュー行が無いなら、送られるかは管理 API からは確かめきれない。内部 GraphQL は毎周回、取得したページにある対象の投稿を配信に回す (`src/pipeline/internalPollCollector.ts` の `stored.targetPosts`) ので、投稿がまだ通常取得のページにあれば次の周回で送られる。ページから外れた投稿は、停止中投稿の補完が届く範囲にあれば再起動後に送られうるが、補完の起点と進み方は `src/db/repositories/backlog.ts` の進捗で変わり、観測の一覧は通常取得と補完のページを区別して返さない。そのため送られると断定せず、直した後に `/admin/posts/<id>` でキュー行が `sent` になったかを確かめ、ならなければ手で貼るよう案内する。再起動は運用者が決めるので、提案にとどめる。
+  1. その投稿先のキュー行が `pending` か `failed` で、投稿先が有効 (`enabled`) なら、取得の状況に関係なく 30 秒ごとの再試行で送られる (`src/services/deliveryService.ts` の `run`、`src/db/repositories/deliveries.ts` の `listReadyIds`)。`sending` は送信中で、その試行の結果を待つ。どちらも原因を直せば送られるので、手で貼るよう案内しない。
+  2. キュー行が無いなら、送られるかは管理 API からは確かめきれない。内部 GraphQL は毎周回、取得したページにある対象の投稿を配信に回す (`src/pipeline/internalPollCollector.ts` の `stored.targetPosts`) ので、投稿がまだ通常取得のページにあれば次の周回で送られる。ページから外れた投稿は、停止中投稿の補完が届く範囲にあれば再起動後に送られうるが、補完の起点と進み方は `src/db/repositories/backlog.ts` の進捗で変わり、観測の一覧は通常取得と補完のページを区別して返さない。そのため送られると断定せず、直してから数分 (取得の数周回) 待って `/admin/posts/<id>` を見るよう案内する。キュー行ができていれば 1 に戻り、まだ無ければ手で貼るよう案内する。再起動は運用者が決めるので、提案にとどめる。
 - 問いの原因とは別に見つけた異常 (ほかの受信アカウントの認証切れなど) は、原因の説明と混ぜず、別の節に書く。
 - 直す手段を、持ち主ごとに提案する。提案だけにとどめ、実行しない。
   - 投稿先の設定: `/watch add` のどのオプションか (オプションは `src/bot/commands/watch.ts` にある)。既存の投稿先に `/watch add` し直すと、指定した項目が変わり、投稿先が有効になり、`createdAt` は変わらない。設定は意図したものかもしれないので、「〜を送りたいなら」の形で書く。
