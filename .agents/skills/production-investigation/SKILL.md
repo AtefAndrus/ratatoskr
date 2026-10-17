@@ -6,7 +6,7 @@ description: Investigates why the deployed ratatoskr bot did or did not relay an
 # 本番調査
 
 読み取りだけで調べる。
-Discord への投稿、`/watch` での設定変更、`bun run cli` の `receiver:*` と `env:set` は実行しない。
+Discord への投稿、`/watch` での設定変更、`bun run cli` の `receiver:*` と `env:set`、プロセスの再起動は実行しない。
 `ADMIN_API_SECRET`、X の Cookie、Discord Token を出力に出さない。
 
 次のチェックリストを写して進める。
@@ -21,14 +21,17 @@ Discord への投稿、`/watch` での設定変更、`bun run cli` の `receiver
 ## 1. 宛先と動作中の版
 
 管理 API はリポジトリのルートで `bun run cli admin <path> [query]` を使って叩く (例: `bun run cli admin /admin/observations "target=beta_lab&limit=1000"`)。
-署名と鍵の読み込みは CLI が行い、`ADMIN_API_SECRET` と `ADMIN_BASE_URL` を環境変数、`.env.local`、`.env` の順に読む。
+署名と鍵の読み込みは CLI が行う。
 `bun run` は実行するコマンドを標準エラーに 1 行出すので、`jq` には標準出力だけを渡す。
 `/admin/logs` だけは JSON ではなくテキストを返す。
-宛先の host は `grep -h '^ADMIN_BASE_URL=' .env.local .env` で確かめ、報告に書く。
 
-`curl -s "<ADMIN_BASE_URL>/health"` は認証なしで、動作中の `version`、`startedAt`、受信アカウントごとの AutoPush の接続と最終通知時刻を返す。
-起動時刻より前の出来事は、`/admin/logs` (メモリ上の直近 5000 行) にも `/admin/metrics` のカウンタにも残っていない。
-DB の行は `RETENTION_DAYS` (既定 30 日) 残り、生応答本文は `RAW_RETENTION_DAYS` (既定 1 日) で消える。
+宛先は、空でない環境変数 `ADMIN_BASE_URL`、`.env.local`、`.env` の順に最初に見つかった値で、どれにも無ければ `http://localhost:3000` になる (`src/config/index.ts` の `loadEnvFile`、`src/http/adminClient.ts`)。
+`printenv ADMIN_BASE_URL` と `grep -h '^ADMIN_BASE_URL=' .env.local .env` をこの順で見て host を決め、報告に書く。
+
+`curl -s "<宛先>/health"` は認証なしで、動作中の `version`、HTTP サーバーの起動時刻 `startedAt`、受信アカウントごとの AutoPush の接続と最終通知時刻を返す。
+前回のプロセスの出来事は、`/admin/logs` (メモリ上の直近 5000 行) にも `/admin/metrics` のカウンタにも残っていない。
+通知、観測、送信履歴の行は `RETENTION_DAYS` (既定 30 日) で消え、生応答本文は `RAW_RETENTION_DAYS` (既定 1 日) で消える。
+キュー行、`delivery_claims`、補完の進捗は保持期間では消えない。
 
 コードを根拠に引くときは、`git fetch --tags` のあと `git diff v<version> HEAD -- <files>` で動作中の版と見比べ、差分があればタグの版を引用する。
 
@@ -36,6 +39,10 @@ DB の行は `RETENTION_DAYS` (既定 30 日) 残り、生応答本文は `RAW_R
 
 URL の `/status/` の後ろの数字を投稿 ID として `bun run cli admin /admin/posts/<id>` を叩く。
 応答の読み方と、投稿先が投稿を弾く条件は `docs/admin-api.md` の「投稿 1 件をたどる」にある。
+`routes` はすべての投稿先を返すので、`routes[].handle` で調べたい監視対象の投稿先を選ぶ。
+
+その投稿の監視対象が見ていたかは、`targetHandle` がその対象の通知か、`isTargetAuthor` が 1 でその対象の観測があるかで決める。
+他人の投稿や会話の文脈として観測に出ただけの行 (`isTargetAuthor` が 0) は、配信の対象になっていない。
 
 投稿先ごとに、次のどれに当たるかを決める。
 
@@ -44,13 +51,14 @@ URL の `/status/` の後ろの数字を投稿 ID として `bun run cli admin /
 | `queue[].state` が `sent` | 送った | `discordMessageId`、`attempts` の失敗、報告者が見ているチャンネルとの違い |
 | 遅れて届いたという報告 | 拾うのが遅れたか、送るのが遅れた | `postIds[].postedAt`、最初の通知か観測の時刻、`attempts` の最初の試行、`sent` の時刻を並べ、どの区間に時間がかかったかを名指しする |
 | `queue[].state` が `pending`、`sending`、`failed` | まだ送れていない | `attempts` の `error`、`/admin/backlog` の `queue`、`/admin/logs?level=warn` |
-| 通知か観測はあるがキュー行が無い | 投稿先が弾いた | 文書の弾く条件を投稿先の設定と 1 つずつ照らし、当たった条件を名指しする |
-| 通知も観測も無い | どの経路も投稿を見ていない | 手順 3 |
-| 通知か観測はあるのに `routes` が空 | 投稿の監視対象が分からない | `/admin/targets`、通知の `targetHandle` が `null` か |
-| 二重に届いたという報告 | 投稿先が 2 つあるか、再送した | 別の監視対象の投稿先が同じチャンネルを指して両方 `sent` か (リポスト)。1 つだけなら、Discord が受理した後で DB を更新する前に停止して再送した可能性があり、その送信は記録に残らないので `/health` の `startedAt` と送信時刻を比べる |
+| 監視対象が見ていたのに、その投稿先にキュー行が無い | 投稿先が弾いた | 文書の弾く条件を投稿先の設定と 1 つずつ照らし、当たった条件を名指しする |
+| 監視対象が見ていない | どの経路も配信の対象として見ていない | 通知の `targetHandle` が `null` なら監視対象を決められなかった。そうでなければ手順 3 |
+| 二重に届いたという報告 | 投稿先が 2 つあるか、再送した | 別の監視対象の投稿先が同じチャンネルを指して両方 `sent` か (リポスト)。1 つだけなら、Discord が受理した後で DB を更新する前に停止して再送した可能性がある。停止した位置により、`attempts` に `sent` が 2 件残るか、最初の送信が記録に残らないので、`/health` の `startedAt` と送信時刻も比べる |
 
 `/admin/posts` が 404 を返すのは、動作中の版にまだこのエンドポイントが無いときである。
-そのときは `/admin/notifications?limit=1000` と `/admin/observations?target=<handle>&limit=1000` を `jq` で投稿 ID に絞り、照合できなかった範囲を報告に書く。
+そのときは `/admin/notifications?limit=1000` を投稿 ID (`postId` か `notificationPostId`) で絞る。
+観測の一覧は投稿 ID を持たないので、`/admin/observations?target=<handle>&limit=1000` から投稿時刻より後の観測を選び、`/admin/observations/<id>` の `posts` で投稿 ID を照合する。
+照合できなかった範囲は報告に書く。
 
 ## 3. 受信側
 
@@ -68,14 +76,15 @@ Web Push と内部 GraphQL は別々に投稿を拾うので、どちらも見�
 
 - 確かめた事実 (叩いたエンドポイントと値、コードの `file:line`) と推測を分け、どちらかを明示する。
 - 宛先の host と動作中の版を書く。
-- 記録が無いことを、起きなかった証拠にしない。保持期間、再起動、弾き条件のどれで記録が無いのかを書き、判断できないなら「判断できない」と書く。
+- 記録が無いことを、起きなかった証拠にしない。保持期間、前回のプロセス、弾き条件のどれで記録が無いのかを書き、判断できないなら「判断できない」と書く。
 - 届かなかった投稿については (届いた投稿には不要)、直した後に送られるかを次の順に判定して書く。
-  1. 投稿がまだ取得ページにあるなら、直した後の次の周回で送られる。内部 GraphQL は毎周回、取得したページにある対象の投稿をすべて配信に回すためである (`src/pipeline/internalPollCollector.ts` の `stored.targetPosts`)。投稿時刻と `observations.lastFetchedAt` の遅いほうより後に、どの受信アカウントのものでも対象の成功した観測があり、そこにその投稿が無ければ、ページから外れている。その時刻より後に成功した観測が無いなら、ページにあるかは判断できない。
-  2. ページから外れているなら、通常の取得では送られない。プロセスを再起動すると停止中投稿の補完が走り、その起点は `/admin/backlog` の `progress` にその対象の行があれば最後の正常取得、無ければ DB に残る観測のうち投稿先の作成後で最初の正常取得になる (`src/db/repositories/backlog.ts` の `ensure`)。投稿時刻が起点より後なら、直した後の再起動で送られる見込みがある。その場合、起点より後に弾かれていた同じ対象のほかの投稿も一緒に送られうることも書く。再起動するかは運用者が決めるので、提案にとどめる。
-  3. どちらも見込みが立たないなら、手で貼るよう案内する。
+  1. その投稿先のキュー行が `pending`、`sending`、`failed` なら、取得の状況に関係なく 30 秒ごとの再試行で送られる (`src/services/deliveryService.ts` の `run`)。原因を直せば送られるので、手で貼るよう案内しない。
+  2. キュー行が無く、投稿がまだ取得ページにあるなら、直した後の次の周回で送られる。内部 GraphQL は毎周回、取得したページにある対象の投稿をすべて配信に回すためである (`src/pipeline/internalPollCollector.ts` の `stored.targetPosts`)。投稿時刻と `observations.lastFetchedAt` の遅いほうより後に対象の成功した観測があり、そこにその投稿が無ければ、ページから外れている。ただし `/admin/backlog` の `progress` でその対象の `state` が `pending` のあいだは、補完のカーソル付きの古いページの観測が混じるので、ページから外れたとは判定しない。その時刻より後に成功した観測が無いときも、ページにあるかは判断できない。
+  3. ページから外れているなら、通常の取得では送られない。プロセスを再起動すると停止中投稿の補完が走り、`notBefore` より後の投稿が送られうる。起点は `src/db/repositories/backlog.ts` の `ensure` が決め、`progress` の `state` が `pending` なら今の `notBefore` のまま、`complete` なら最後のカーソルなしの正常取得、行が無ければ DB に残る観測のうち投稿先の作成後で最初の正常取得 (それも無ければ投稿先の作成時刻) になる。投稿時刻が起点より後なら、直した後の再起動で送られる見込みがある。その場合、起点より後に弾かれていた同じ対象のほかの投稿も一緒に送られうることも書く。再起動するかは運用者が決めるので、提案にとどめる。
+  4. どれでも見込みが立たないなら、手で貼るよう案内する。
 - 問いの原因とは別に見つけた異常 (ほかの受信アカウントの認証切れなど) は、原因の説明と混ぜず、別の節に書く。
 - 直す手段を、持ち主ごとに提案する。提案だけにとどめ、実行しない。
-  - 投稿先の設定: `/watch add` のどのオプションか (オプションは `src/bot/commands/watch.ts` にある。既存の投稿先に `/watch add` し直すと指定した項目だけが変わり、`createdAt` は変わらない)。設定は意図したものかもしれないので、「〜を送りたいなら」の形で書く。
+  - 投稿先の設定: `/watch add` のどのオプションか (オプションは `src/bot/commands/watch.ts` にある)。既存の投稿先に `/watch add` し直すと、指定した項目が変わり、投稿先が有効になり、`createdAt` は変わらない。設定は意図したものかもしれないので、「〜を送りたいなら」の形で書く。
   - 受信アカウントの認証: `bun run cli receiver:update <label>`。
   - Discord のチャンネルや Bot のロールの権限: そのサーバーの管理者。
   - コードの不具合: その箇所。
