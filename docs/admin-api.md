@@ -99,13 +99,14 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 | フィールド | 読み方 |
 | ---------- | ------ |
 | `postIds[]` | 引いた ID と、その ID の Snowflake から復元した `postedAt` |
-| `notifications` | 受信した Web Push 通知。空なら Web Push では届いていないか、保持期間で消えている |
+| `notifications` | 受信した Web Push 通知。空なら Web Push では届いていないか、保持期間で消えているか、復号や解析に失敗して投稿 ID が付かなかった。最後の場合は投稿時刻の前後の `/admin/notifications?kind=malformed` と `kind=other` に行がある |
 | `observations.count` と `lastFetchedAt` | `postIds` のどれかに一致した観測投稿の行数と、それを含む観測の最後の取得時刻。投稿は周回ごとに取り直されるので行数は大きくなる |
 | `observations.sightings` | 観測投稿の行を古い順に `limit` 件。`isNew` は受信アカウントと監視対象の組での初出 (保持期間内)。`isTargetAuthor` が 0 の行 (他人の投稿や会話モジュールの一部) は配信の対象にならない |
 | `routes[].queue` | その投稿先のキュー行。`state` が `sent` なら `discordMessageId` に送ったメッセージがある。`source` は最後にこの行へ投入した経路で、送信に失敗した行を別の経路が投入し直すと書き換わる |
-| `routes[].queue[].attempts` | キュー行の投入から最終更新までのあいだの送信履歴 (`sent`、`failed`、`skipped_duplicate`)。キュー行の `lastError` は再試行のたびに消えるので、遅れた理由はここで見る |
+| `routes[].queue[].attempts` | キュー行の投入直後 1 時間と最終更新直前 1 時間の送信履歴 (`sent`、`failed`、`skipped_duplicate`)。あいだの試行は省くので、試行の総数は `attemptCount` で見る。キュー行の `lastError` は再試行のたびに消えるので、遅れた理由はここで見る |
 
-キューが導入される前に送った投稿の行は `discordMessageId` を持たず、投入時刻と最終更新時刻が同じなので `attempts` も空になる。
+キューが導入される前に送った投稿の行は `discordMessageId` を持たない。
+送ったメッセージは、`attempts` に `sent` の行が残っていればその `discordMessageId` で分かる。
 
 キュー行の無い投稿先は、送る前に弾かれたか、どの経路もその投稿を配信対象として見ていない。
 弾く条件は次のとおりで、どれも投稿先ごとの記録を残さない。
@@ -114,7 +115,7 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 - `routes[].kinds` が投稿の種別を許していない。種別は観測の `typesJson` か、通知の投稿者と監視対象の違い (違えばリポスト) から読む。
 - `routes[].mediaFilter` が `photo` で、投稿に画像が無いか、画像の有無を判定できなかった。
 - 投稿時刻が `routes[].createdAt` より前である。比べる時刻は配信に使った ID のもので、リポストならリポスト自体の時刻になる。内部 GraphQL は観測の `createdAt` を使い、無いときと Web Push では `postIds[].postedAt` を使う。
-- 停止中投稿の補完で、投稿が `/admin/backlog` の `notBefore` より前である。
+- 停止中投稿の補完で、観測の `createdAt` が `/admin/backlog` の `notBefore` より前か、`createdAt` が無い。補完のこの判定は投稿 ID の時刻で補わない。
 
 `/admin/metrics` の `delivery.filtered` 系カウンタは、種別とメディアで弾いた件数のうち初出の分だけを数える。
 投稿時刻と `enabled` で弾いた分は数えないので、カウンタが増えていないことは弾かれていない証拠にならない。

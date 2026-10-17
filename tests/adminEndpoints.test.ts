@@ -372,6 +372,91 @@ describe("admin endpoints", () => {
     }
   });
 
+  test("送信履歴はキュー行ごとの配信元と、投入直後と最終更新直前の範囲だけから拾う", async () => {
+    const context = createTestContext();
+    try {
+      const target = addTarget(context, { handle: "example" });
+      const route = context.routes.add({ targetId: target, guildId: "g", channelId: "c1" }).route;
+      const migrated = context.routes.add({
+        targetId: target,
+        guildId: "g",
+        channelId: "c2",
+      }).route;
+      const originalId = recentPostId(-120_000);
+      const firstRepost = recentPostId(-60_000);
+      const secondRepost = recentPostId();
+      const queued = "2026-10-15T00:00:00.000Z";
+      const enqueue = (routeId: number, postId: string, postUrl: string, sourceRecordId: number) =>
+        context.deliveries.enqueue({
+          targetId: target,
+          routeId,
+          postId,
+          postUrl,
+          kindsJson: '["reposts"]',
+          postCreatedAt: queued,
+          source: "internal_graphql",
+          sourceRecordId,
+          queuedAt: queued,
+        });
+      // 観測投稿の行は作らない。保持期間で元の観測が消えた状態にあたる。
+      enqueue(route.id, firstRepost, `https://x.com/author/status/${originalId}`, 501);
+      enqueue(route.id, secondRepost, `https://x.com/author/status/${originalId}`, 502);
+      enqueue(migrated.id, firstRepost, `https://x.com/example/status/${firstRepost}`, 501);
+      context.db
+        .query(
+          "UPDATE delivery_queue SET updated_at = '2026-10-17T00:00:00.000Z' WHERE source_record_id = 501",
+        )
+        .run();
+      context.db
+        .query(
+          "UPDATE delivery_queue SET updated_at = '2026-10-15T00:30:00.000Z' WHERE source_record_id = 502",
+        )
+        .run();
+      for (const [sourceRecordId, attemptedAt, status] of [
+        [501, "2026-10-15T00:10:00.000Z", "failed"],
+        [501, "2026-10-16T00:00:00.000Z", "failed"],
+        [501, "2026-10-16T23:50:00.000Z", "failed"],
+        [502, "2026-10-15T00:20:00.000Z", "sent"],
+      ] as const) {
+        context.deliveries.record({
+          source: "internal_graphql",
+          sourceRecordId,
+          routeId: route.id,
+          attemptedAt,
+          status,
+        });
+      }
+      const router = createAdminRouter({
+        adminApiSecret: SECRET,
+        ...context,
+        receiverStatuses: () => [],
+      });
+
+      const response = await router(
+        await signedRequest(`http://localhost:3000/admin/posts/${originalId}`),
+      );
+      const body = (await response.json()) as {
+        routes: Array<{
+          channelId: string;
+          queue: Array<{ postId: string; attempts: Array<{ attemptedAt: string }> }>;
+        }>;
+      };
+      const attemptsByPost = Object.fromEntries(
+        (body.routes[0]?.queue ?? []).map((entry) => [
+          entry.postId,
+          entry.attempts.map((attempt) => attempt.attemptedAt),
+        ]),
+      );
+      expect(attemptsByPost).toEqual({
+        [firstRepost]: ["2026-10-15T00:10:00.000Z", "2026-10-16T23:50:00.000Z"],
+        [secondRepost]: ["2026-10-15T00:20:00.000Z"],
+      });
+      expect(body.routes[1]?.queue.map((entry) => entry.postId)).toEqual([firstRepost]);
+    } finally {
+      context.db.close();
+    }
+  });
+
   test("シークレット未設定なら 503 を返す", async () => {
     const context = createTestContext();
     try {

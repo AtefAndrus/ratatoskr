@@ -70,6 +70,8 @@ export interface QueueEntryView {
   updatedAt: string;
 }
 
+const ATTEMPT_WINDOW_MS = 60 * 60_000;
+
 export interface DeliveryAttemptView {
   id: number;
   source: DeliverySource;
@@ -263,38 +265,60 @@ export class DeliveryRepository {
 
   /**
    * キュー行は再試行のたびに last_error を消し、移行前の送信済み行は discord_message_id を持たないので、送信履歴も添える。
-   * 履歴は (source, source_record_id) の索引が無いため、キュー行の投入から最終更新までの時刻範囲で attempted_at の索引から絞る。
+   * 履歴は (source, source_record_id) の索引が無いため attempted_at の索引から時刻範囲で絞る。
+   * 範囲を投入から最終更新までにしないのは、失敗し続けた行では範囲が保持期間全体に広がり、同期の SQLite でプロセスを止めるため。
+   * 投入直後と最終更新直前の各 1 時間だけを読み、最初の失敗と最後の結果が分かるようにする。
+   * 元の通知や観測が保持期間で消えても拾えるよう、キュー行自身の配信元も照合に含める。
    */
   listAttemptsForQueueEntry(
-    entry: Pick<QueueEntryView, "routeId" | "queuedAt" | "updatedAt">,
-    records: { notificationIds: readonly number[]; postIds: readonly string[] },
+    entry: Pick<
+      QueueEntryView,
+      "routeId" | "postId" | "source" | "sourceRecordId" | "queuedAt" | "updatedAt"
+    >,
+    notificationIds: readonly number[],
   ): DeliveryAttemptView[] {
-    return this.db
-      .query(
-        `SELECT deliveries.id, deliveries.source, deliveries.source_record_id AS sourceRecordId,
-                deliveries.attempted_at AS attemptedAt, deliveries.status,
-                deliveries.discord_message_id AS discordMessageId, deliveries.error
-         FROM discord_deliveries AS deliveries
-         WHERE deliveries.attempted_at BETWEEN $from AND $to
-           AND deliveries.route_id = $routeId
-           AND (
-             (deliveries.source = 'webpush'
-               AND deliveries.source_record_id IN (SELECT value FROM json_each($notificationIds)))
-             OR (deliveries.source = 'internal_graphql'
-               AND deliveries.source_record_id IN (
-                 SELECT posts.id FROM internal_graphql_observation_posts AS posts
-                 WHERE posts.post_id IN (SELECT value FROM json_each($postIds))
-               ))
-           )
-         ORDER BY deliveries.id`,
-      )
-      .all({
-        from: entry.queuedAt,
-        to: entry.updatedAt,
-        routeId: entry.routeId,
-        notificationIds: JSON.stringify(records.notificationIds),
-        postIds: JSON.stringify(records.postIds),
-      }) as DeliveryAttemptView[];
+    const queuedMs = Date.parse(entry.queuedAt);
+    const updatedMs = Date.parse(entry.updatedAt);
+    if (Number.isNaN(queuedMs) || Number.isNaN(updatedMs)) return [];
+    const firstEndMs = Math.min(queuedMs + ATTEMPT_WINDOW_MS, updatedMs);
+    const windows = [{ from: queuedMs, to: firstEndMs }];
+    if (updatedMs > firstEndMs) {
+      windows.push({
+        from: Math.max(updatedMs - ATTEMPT_WINDOW_MS, firstEndMs + 1),
+        to: updatedMs,
+      });
+    }
+    const query = this.db.query(
+      `SELECT deliveries.id, deliveries.source, deliveries.source_record_id AS sourceRecordId,
+              deliveries.attempted_at AS attemptedAt, deliveries.status,
+              deliveries.discord_message_id AS discordMessageId, deliveries.error
+       FROM discord_deliveries AS deliveries
+       WHERE deliveries.attempted_at BETWEEN $from AND $to
+         AND deliveries.route_id = $routeId
+         AND (
+           (deliveries.source = $source AND deliveries.source_record_id = $sourceRecordId)
+           OR (deliveries.source = 'webpush'
+             AND deliveries.source_record_id IN (SELECT value FROM json_each($notificationIds)))
+           OR (deliveries.source = 'internal_graphql'
+             AND deliveries.source_record_id IN (
+               SELECT posts.id FROM internal_graphql_observation_posts AS posts
+               WHERE posts.post_id = $postId
+             ))
+         )
+       ORDER BY deliveries.id`,
+    );
+    return windows.flatMap(
+      (window) =>
+        query.all({
+          from: new Date(window.from).toISOString(),
+          to: new Date(window.to).toISOString(),
+          routeId: entry.routeId,
+          source: entry.source,
+          sourceRecordId: entry.sourceRecordId,
+          notificationIds: JSON.stringify(notificationIds),
+          postId: entry.postId,
+        }) as DeliveryAttemptView[],
+    );
   }
 
   queueCounts(): DeliveryQueueCounts {

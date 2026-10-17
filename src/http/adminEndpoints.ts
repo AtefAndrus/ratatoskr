@@ -183,16 +183,14 @@ export function createAdminRouter(
         if (limit instanceof Response) return limit;
         // リポストは通知主体側の ID で配信されるので、通知とキュー行からその ID を拾って引き直す。
         const notifications = deps.notifications.listByPostId(postId);
-        const queue = deps.deliveries.listQueueByPostIds([
+        const notifiedIds = [
           ...new Set([postId, ...notifications.flatMap((n) => n.notificationPostId ?? [])]),
-        ]);
-        const postIds = [
-          ...new Set([
-            postId,
-            ...notifications.flatMap((n) => n.notificationPostId ?? []),
-            ...queue.map((entry) => entry.postId),
-          ]),
         ];
+        let queue = deps.deliveries.listQueueByPostIds(notifiedIds);
+        const postIds = [...new Set([...notifiedIds, ...queue.map((entry) => entry.postId)])];
+        // URL で見つけたリポストの ID は、元投稿を URL に持たない行 (キュー導入時に移行した行など) にもある。
+        if (postIds.length > notifiedIds.length)
+          queue = deps.deliveries.listQueueByPostIds(postIds);
         const observations = deps.observations.listPostSightings(postIds, limit);
         const targetIds = new Set([
           ...notifications.flatMap((n) => n.targetId ?? []),
@@ -206,7 +204,6 @@ export function createAdminRouter(
             ...observations.authorHandles,
           ].map((handle) => handle.toLowerCase()),
         );
-        const notificationIds = notifications.map((n) => n.id);
         return json({
           postId,
           postIds: postIds.map((id) => {
@@ -234,10 +231,12 @@ export function createAdminRouter(
                 .filter((entry) => entry.routeId === route.id)
                 .map((entry) => ({
                   ...entry,
-                  attempts: deps.deliveries.listAttemptsForQueueEntry(entry, {
-                    notificationIds,
-                    postIds,
-                  }),
+                  attempts: deps.deliveries.listAttemptsForQueueEntry(
+                    entry,
+                    notifications
+                      .filter((n) => (n.notificationPostId ?? n.postId) === entry.postId)
+                      .map((n) => n.id),
+                  ),
                 })),
             })),
         });
