@@ -51,6 +51,37 @@ export interface DeliveryView {
   error: string | null;
 }
 
+export interface QueueEntryView {
+  id: number;
+  targetId: number;
+  routeId: number;
+  postId: string;
+  postUrl: string;
+  kindsJson: string;
+  postCreatedAt: string;
+  source: DeliverySource;
+  sourceRecordId: number;
+  state: DeliveryQueueState;
+  attemptCount: number;
+  lastAttemptedAt: string | null;
+  discordMessageId: string | null;
+  lastError: string | null;
+  queuedAt: string;
+  updatedAt: string;
+}
+
+const ATTEMPT_WINDOW_MS = 60 * 60_000;
+
+export interface DeliveryAttemptView {
+  id: number;
+  source: DeliverySource;
+  sourceRecordId: number;
+  attemptedAt: string;
+  status: DeliveryStatus;
+  discordMessageId: string | null;
+  error: string | null;
+}
+
 export class DeliveryRepository {
   constructor(private readonly db: Database) {}
 
@@ -208,6 +239,86 @@ export class DeliveryRepository {
          WHERE id = $id`,
       )
       .run({ id, error, failedAt });
+  }
+
+  /** リポストの行は post_id がリポスト自体の ID で、post_url が元投稿を指すので、URL の末尾でも引く。 */
+  listQueueByPostIds(postIds: readonly string[]): QueueEntryView[] {
+    return this.db
+      .query(
+        `SELECT queue.id, queue.target_id AS targetId, queue.route_id AS routeId,
+                queue.post_id AS postId, queue.post_url AS postUrl, queue.kinds_json AS kindsJson,
+                queue.post_created_at AS postCreatedAt, queue.source,
+                queue.source_record_id AS sourceRecordId, queue.state,
+                queue.attempt_count AS attemptCount, queue.last_attempted_at AS lastAttemptedAt,
+                queue.discord_message_id AS discordMessageId, queue.last_error AS lastError,
+                queue.created_at AS queuedAt, queue.updated_at AS updatedAt
+         FROM delivery_queue AS queue
+         WHERE queue.post_id IN (SELECT value FROM json_each($postIds))
+            OR EXISTS (
+              SELECT 1 FROM json_each($postIds) AS ids
+              WHERE substr(queue.post_url, -length('/status/' || ids.value)) = '/status/' || ids.value
+            )
+         ORDER BY queue.id`,
+      )
+      .all({ postIds: JSON.stringify(postIds) }) as QueueEntryView[];
+  }
+
+  /**
+   * キュー行は再試行のたびに last_error を消し、移行前の送信済み行は discord_message_id を持たないので、送信履歴も添える。
+   * 履歴は (source, source_record_id) の索引が無いため attempted_at の索引から時刻範囲で絞る。
+   * 範囲を投入から最終更新までにしないのは、失敗し続けた行では範囲が保持期間全体に広がり、同期の SQLite でプロセスを止めるため。
+   * 投入直後と最終更新直前の各 1 時間だけを読み、最初の失敗と最後の結果が分かるようにする。
+   * 元の通知や観測が保持期間で消えても拾えるよう、キュー行自身の配信元も照合に含める。
+   */
+  listAttemptsForQueueEntry(
+    entry: Pick<
+      QueueEntryView,
+      "routeId" | "postId" | "source" | "sourceRecordId" | "queuedAt" | "updatedAt"
+    >,
+    notificationIds: readonly number[],
+  ): DeliveryAttemptView[] {
+    const queuedMs = Date.parse(entry.queuedAt);
+    const updatedMs = Date.parse(entry.updatedAt);
+    if (Number.isNaN(queuedMs) || Number.isNaN(updatedMs)) return [];
+    const firstEndMs = Math.min(queuedMs + ATTEMPT_WINDOW_MS, updatedMs);
+    const windows = [{ from: queuedMs, to: firstEndMs }];
+    if (updatedMs > firstEndMs) {
+      windows.push({
+        from: Math.max(updatedMs - ATTEMPT_WINDOW_MS, firstEndMs + 1),
+        to: updatedMs,
+      });
+    }
+    const query = this.db.query(
+      `SELECT deliveries.id, deliveries.source, deliveries.source_record_id AS sourceRecordId,
+              deliveries.attempted_at AS attemptedAt, deliveries.status,
+              deliveries.discord_message_id AS discordMessageId, deliveries.error
+       FROM discord_deliveries AS deliveries
+       WHERE deliveries.attempted_at BETWEEN $from AND $to
+         AND deliveries.route_id = $routeId
+         AND (
+           (deliveries.source = $source AND deliveries.source_record_id = $sourceRecordId)
+           OR (deliveries.source = 'webpush'
+             AND deliveries.source_record_id IN (SELECT value FROM json_each($notificationIds)))
+           OR (deliveries.source = 'internal_graphql'
+             AND deliveries.source_record_id IN (
+               SELECT posts.id FROM internal_graphql_observation_posts AS posts
+               WHERE posts.post_id = $postId
+             ))
+         )
+       ORDER BY deliveries.id`,
+    );
+    return windows.flatMap(
+      (window) =>
+        query.all({
+          from: new Date(window.from).toISOString(),
+          to: new Date(window.to).toISOString(),
+          routeId: entry.routeId,
+          source: entry.source,
+          sourceRecordId: entry.sourceRecordId,
+          notificationIds: JSON.stringify(notificationIds),
+          postId: entry.postId,
+        }) as DeliveryAttemptView[],
+    );
   }
 
   queueCounts(): DeliveryQueueCounts {

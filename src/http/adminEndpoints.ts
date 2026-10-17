@@ -7,6 +7,7 @@ import type { NotificationRepository } from "../db/repositories/notifications";
 import type { ReceiverRepository } from "../db/repositories/receivers";
 import type { RouteRepository } from "../db/repositories/routes";
 import type { TargetRepository } from "../db/repositories/targets";
+import { xSnowflakeTimestampMs } from "../services/deliveryService";
 import type { ReceiverStatus } from "../services/receiverSupervisor";
 import { getRecentLogs, type LogLevel } from "../utils/logger";
 import { metrics } from "../utils/metrics";
@@ -171,6 +172,53 @@ export function createAdminRouter(
         const observation = deps.observations.getResponseText(id);
         if (observation === null) return jsonError(404, "Observation not found");
         return json({ ...observation, posts: deps.observations.listPostsForObservation(id) });
+      },
+    },
+    {
+      match: (pathname) => pathname.startsWith("/admin/posts/"),
+      handle: (url) => {
+        const postId = url.pathname.slice("/admin/posts/".length);
+        if (!/^\d+$/.test(postId)) return jsonError(400, "Invalid post id");
+        const limit = readLimit(url);
+        if (limit instanceof Response) return limit;
+        // リポストは通知主体側の ID で配信されるので、通知とキュー行からその ID を拾って引き直す。
+        const notifications = deps.notifications.listByPostId(postId);
+        const notifiedIds = [
+          ...new Set([postId, ...notifications.flatMap((n) => n.notificationPostId ?? [])]),
+        ];
+        let queue = deps.deliveries.listQueueByPostIds(notifiedIds);
+        const postIds = [...new Set([...notifiedIds, ...queue.map((entry) => entry.postId)])];
+        // URL で見つけたリポストの ID は、元投稿を URL に持たない行 (キュー導入時に移行した行など) にもある。
+        if (postIds.length > notifiedIds.length)
+          queue = deps.deliveries.listQueueByPostIds(postIds);
+        return json({
+          postId,
+          postIds: postIds.map((id) => {
+            const postedAt = new Date(xSnowflakeTimestampMs(id) ?? Number.NaN);
+            return {
+              postId: id,
+              postedAt: Number.isNaN(postedAt.getTime()) ? null : postedAt.toISOString(),
+            };
+          }),
+          notifications,
+          observations: deps.observations.listPostSightings(postIds, limit),
+          // 投稿先は絞らずに全件並べる。投稿の監視対象は投稿者、リポスト元、会話の文脈など複数の記録から決まり、
+          // どれかが保持期間で消えると絞り込みが調べたい投稿先を落とすため。投稿先は数十件に収まる。
+          routes: deps.routes.listAll().map((route) => ({
+            ...route,
+            queue: queue
+              .filter((entry) => entry.routeId === route.id)
+              .map((entry) => ({
+                ...entry,
+                attempts: deps.deliveries.listAttemptsForQueueEntry(
+                  entry,
+                  notifications
+                    .filter((n) => (n.notificationPostId ?? n.postId) === entry.postId)
+                    .map((n) => n.id),
+                ),
+              })),
+          })),
+        });
       },
     },
     {

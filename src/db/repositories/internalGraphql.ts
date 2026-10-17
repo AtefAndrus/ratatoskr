@@ -67,6 +67,22 @@ export interface ObservationView {
   newPostCount: number;
 }
 
+export interface PostSightingView {
+  id: number;
+  observationId: number;
+  postId: string;
+  receiverLabel: string;
+  targetHandle: string;
+  fetchedAt: string;
+  createdAt: string | null;
+  authorHandle: string | null;
+  typesJson: string;
+  referencedPostIdsJson: string;
+  mediaTypesJson: string | null;
+  isNew: number;
+  isTargetAuthor: number;
+}
+
 export class InternalGraphqlRepository {
   constructor(private readonly db: Database) {}
 
@@ -239,6 +255,44 @@ export class InternalGraphqlRepository {
          ORDER BY id`,
       )
       .all({ observationId }) as Array<Record<string, unknown>>;
+  }
+
+  /**
+   * 投稿は周回ごとに取り直されて観測の数だけ行があるので、件数と最終時刻は全体から、行は古い順に limit 件だけ返す。
+   * リポストの元投稿 ID からは引かない。referenced_post_ids_json には索引が無く、全行を走査することになるため。
+   */
+  listPostSightings(
+    postIds: readonly string[],
+    limit: number,
+  ): { count: number; lastFetchedAt: string | null; sightings: PostSightingView[] } {
+    const params = { postIds: JSON.stringify(postIds) };
+    const summary = this.db
+      .query(
+        `SELECT count(*) AS count, max(observations.fetched_at) AS lastFetchedAt
+         FROM internal_graphql_observation_posts AS posts
+         JOIN internal_graphql_observations AS observations ON observations.id = posts.observation_id
+         WHERE posts.post_id IN (SELECT value FROM json_each($postIds))`,
+      )
+      .get(params) as { count: number; lastFetchedAt: string | null };
+    const sightings = this.db
+      .query(
+        `SELECT posts.id, posts.observation_id AS observationId, posts.post_id AS postId,
+                receivers.label AS receiverLabel, targets.handle AS targetHandle,
+                observations.fetched_at AS fetchedAt, posts.created_at AS createdAt,
+                posts.author_handle AS authorHandle, posts.types_json AS typesJson,
+                posts.referenced_post_ids_json AS referencedPostIdsJson,
+                posts.media_types_json AS mediaTypesJson, posts.is_new AS isNew,
+                posts.is_target_author AS isTargetAuthor
+         FROM internal_graphql_observation_posts AS posts
+         JOIN internal_graphql_observations AS observations ON observations.id = posts.observation_id
+         JOIN receivers ON receivers.id = observations.receiver_id
+         JOIN watch_targets AS targets ON targets.id = observations.target_id
+         WHERE posts.post_id IN (SELECT value FROM json_each($postIds))
+         ORDER BY posts.id
+         LIMIT $limit`,
+      )
+      .all({ ...params, limit }) as PostSightingView[];
+    return { ...summary, sightings };
   }
 
   latestFetchedAt(receiverId: number): string | null {

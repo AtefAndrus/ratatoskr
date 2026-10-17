@@ -47,6 +47,20 @@ export interface ParsedNotificationView {
   headersJson: string | null;
 }
 
+const SELECT_NOTIFICATION_VIEW = `
+  SELECT parsed.id, parsed.frame_id AS frameId, frames.receiver_id AS receiverId,
+         frames.received_at AS receivedAt, parsed.parsed_at AS parsedAt,
+         parsed.parser_version AS parserVersion, parsed.notification_kind AS notificationKind,
+         parsed.post_id AS postId, parsed.post_url AS postUrl, parsed.author_handle AS authorHandle,
+         parsed.notification_post_id AS notificationPostId,
+         parsed.notification_title AS notificationTitle, parsed.target_id AS targetId,
+         targets.handle AS targetHandle, parsed.parse_error AS parseError,
+         parsed.decrypted_text AS decryptedText, frames.headers_json AS headersJson
+  FROM parsed_notifications AS parsed
+  JOIN autopush_frames AS frames ON frames.id = parsed.frame_id
+  LEFT JOIN watch_targets AS targets ON targets.id = parsed.target_id
+`;
+
 export class NotificationRepository {
   constructor(private readonly db: Database) {}
 
@@ -87,22 +101,23 @@ export class NotificationRepository {
   listRecent(limit: number, kind?: string): ParsedNotificationView[] {
     return this.db
       .query(
-        `SELECT parsed.id, parsed.frame_id AS frameId, frames.receiver_id AS receiverId,
-                frames.received_at AS receivedAt, parsed.parsed_at AS parsedAt,
-                parsed.parser_version AS parserVersion, parsed.notification_kind AS notificationKind,
-                parsed.post_id AS postId, parsed.post_url AS postUrl, parsed.author_handle AS authorHandle,
-                parsed.notification_post_id AS notificationPostId,
-                parsed.notification_title AS notificationTitle, parsed.target_id AS targetId,
-                targets.handle AS targetHandle, parsed.parse_error AS parseError,
-                parsed.decrypted_text AS decryptedText, frames.headers_json AS headersJson
-         FROM parsed_notifications AS parsed
-         JOIN autopush_frames AS frames ON frames.id = parsed.frame_id
-         LEFT JOIN watch_targets AS targets ON targets.id = parsed.target_id
+        `${SELECT_NOTIFICATION_VIEW}
          WHERE ($kind IS NULL OR parsed.notification_kind = $kind)
          ORDER BY parsed.id DESC
          LIMIT $limit`,
       )
       .all({ limit, kind: kind ?? null }) as ParsedNotificationView[];
+  }
+
+  /** リポストの通知は URI が元投稿を指すので、通知主体側の投稿 ID でも引く。 */
+  listByPostId(postId: string): ParsedNotificationView[] {
+    return this.db
+      .query(
+        `${SELECT_NOTIFICATION_VIEW}
+         WHERE parsed.post_id = $postId OR parsed.notification_post_id = $postId
+         ORDER BY parsed.id`,
+      )
+      .all({ postId }) as ParsedNotificationView[];
   }
 
   countSince(receivedSince: string): number {
