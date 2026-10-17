@@ -90,9 +90,9 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 
 ## 投稿 1 件をたどる
 
-`/admin/posts/<postId>` は、指定した投稿 ID を Web Push の通知 (`postId` または `notificationPostId` が一致するもの)、キュー、内部 GraphQL の観測から探し、関係する監視対象の投稿先をすべて、その投稿先でのキュー行と並べて返す。
-関係する監視対象は、通知、観測、キュー行の対象に加え、通知か観測の投稿者、またはリポストの元投稿者が監視対象ならその対象も含む。
-引用元の投稿者は観測に保存していないので、引用した側の観測だけからは引用元の監視対象の投稿先は出ない。
+`/admin/posts/<postId>` は、指定した投稿 ID を Web Push の通知 (`postId` または `notificationPostId` が一致するもの)、キュー、内部 GraphQL の観測から探し、すべての投稿先を、その投稿先でのこの投稿のキュー行と並べて返す。
+投稿先を投稿の監視対象で絞らないのは、監視対象が投稿者、リポスト元、会話の文脈など複数の記録から決まり、どれかが保持期間で消えると調べたい投稿先が落ちるためである。
+調べたい監視対象の投稿先は `routes[].handle` で選ぶ。
 リポストはリポスト自体の ID で配信されるので、元投稿の ID で引いても、通知の `notificationPostId` と、元投稿を URL に持つキュー行からリポストの ID を拾い、`postIds` に並べてその ID でも観測とキューを引く。
 通知が保持期間で消え、キュー行も無いリポスト (投稿先の設定で弾かれたもの) は、元投稿の ID からはたどれない。
 その場合は `/admin/observations?target=<handle>` の観測を `/admin/observations/<id>` で開き、`referencedPostIdsJson` に元投稿を持つ行の `postId` で引き直す。

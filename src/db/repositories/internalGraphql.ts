@@ -264,31 +264,16 @@ export class InternalGraphqlRepository {
   listPostSightings(
     postIds: readonly string[],
     limit: number,
-  ): {
-    count: number;
-    lastFetchedAt: string | null;
-    targetIds: number[];
-    authorHandles: string[];
-    sightings: PostSightingView[];
-  } {
+  ): { count: number; lastFetchedAt: string | null; sightings: PostSightingView[] } {
     const params = { postIds: JSON.stringify(postIds) };
     const summary = this.db
       .query(
-        `SELECT count(*) AS count, max(observations.fetched_at) AS lastFetchedAt,
-                json_group_array(DISTINCT observations.target_id) AS targetIdsJson,
-                json_group_array(DISTINCT posts.author_handle) AS authorHandlesJson,
-                json_group_array(DISTINCT posts.referenced_author_handle) AS referencedAuthorHandlesJson
+        `SELECT count(*) AS count, max(observations.fetched_at) AS lastFetchedAt
          FROM internal_graphql_observation_posts AS posts
          JOIN internal_graphql_observations AS observations ON observations.id = posts.observation_id
          WHERE posts.post_id IN (SELECT value FROM json_each($postIds))`,
       )
-      .get(params) as {
-      count: number;
-      lastFetchedAt: string | null;
-      targetIdsJson: string;
-      authorHandlesJson: string;
-      referencedAuthorHandlesJson: string;
-    };
+      .get(params) as { count: number; lastFetchedAt: string | null };
     const sightings = this.db
       .query(
         `SELECT posts.id, posts.observation_id AS observationId, posts.post_id AS postId,
@@ -307,19 +292,7 @@ export class InternalGraphqlRepository {
          LIMIT $limit`,
       )
       .all({ ...params, limit }) as PostSightingView[];
-    return {
-      count: summary.count,
-      lastFetchedAt: summary.lastFetchedAt,
-      targetIds: (JSON.parse(summary.targetIdsJson) as Array<number | null>).filter(
-        (id): id is number => id !== null,
-      ),
-      // リポストの元投稿者も、監視対象なら投稿先を並べる対象になる。引用元の投稿者は観測に保存していない。
-      authorHandles: [
-        ...(JSON.parse(summary.authorHandlesJson) as Array<string | null>),
-        ...(JSON.parse(summary.referencedAuthorHandlesJson) as Array<string | null>),
-      ].filter((handle): handle is string => handle !== null),
-      sightings,
-    };
+    return { ...summary, sightings };
   }
 
   latestFetchedAt(receiverId: number): string | null {

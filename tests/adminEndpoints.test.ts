@@ -229,7 +229,7 @@ describe("admin endpoints", () => {
         lastFetchedAt: "2026-10-17T00:01:01.000Z",
         sightings: [{ postId: repostId, receiverLabel: "receiver-a", isNew: 1 }],
       });
-      expect(body.routes.map((r) => r.channelId)).toEqual(["c1", "c2"]);
+      expect(body.routes.map((r) => r.channelId)).toEqual(["c1", "c2", "c3"]);
       expect(body.routes[0]?.queue).toMatchObject([{ state: "pending", source: "webpush" }]);
       expect(body.routes[1]).toMatchObject({
         id: filtered.id,
@@ -242,8 +242,14 @@ describe("admin endpoints", () => {
         postIds: [{ postId: "1" }],
         notifications: [],
         observations: { count: 0, lastFetchedAt: null, sightings: [] },
-        routes: [],
+        routes: [{ queue: [] }, { queue: [] }, { queue: [] }],
       });
+
+      const outOfRange = await router(
+        await signedRequest(`${base}/admin/posts/37000000000000000000000`),
+      );
+      expect(outOfRange.status).toBe(200);
+      expect(await outOfRange.json()).toMatchObject({ postIds: [{ postedAt: null }] });
     } finally {
       context.db.close();
     }

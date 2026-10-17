@@ -191,54 +191,33 @@ export function createAdminRouter(
         // URL で見つけたリポストの ID は、元投稿を URL に持たない行 (キュー導入時に移行した行など) にもある。
         if (postIds.length > notifiedIds.length)
           queue = deps.deliveries.listQueueByPostIds(postIds);
-        const observations = deps.observations.listPostSightings(postIds, limit);
-        const targetIds = new Set([
-          ...notifications.flatMap((n) => n.targetId ?? []),
-          ...observations.targetIds,
-          ...queue.map((entry) => entry.targetId),
-        ]);
-        // 他の対象のタイムラインに会話の一部として出た投稿でも、投稿者が監視対象ならその投稿先を並べる。
-        const authorHandles = new Set(
-          [
-            ...notifications.flatMap((n) => n.authorHandle ?? []),
-            ...observations.authorHandles,
-          ].map((handle) => handle.toLowerCase()),
-        );
         return json({
           postId,
           postIds: postIds.map((id) => {
-            const postedAtMs = xSnowflakeTimestampMs(id);
+            const postedAt = new Date(xSnowflakeTimestampMs(id) ?? Number.NaN);
             return {
               postId: id,
-              postedAt: postedAtMs === null ? null : new Date(postedAtMs).toISOString(),
+              postedAt: Number.isNaN(postedAt.getTime()) ? null : postedAt.toISOString(),
             };
           }),
           notifications,
-          observations: {
-            count: observations.count,
-            lastFetchedAt: observations.lastFetchedAt,
-            sightings: observations.sightings,
-          },
-          routes: deps.routes
-            .listAll()
-            .filter(
-              (route) =>
-                targetIds.has(route.targetId) || authorHandles.has(route.handle.toLowerCase()),
-            )
-            .map((route) => ({
-              ...route,
-              queue: queue
-                .filter((entry) => entry.routeId === route.id)
-                .map((entry) => ({
-                  ...entry,
-                  attempts: deps.deliveries.listAttemptsForQueueEntry(
-                    entry,
-                    notifications
-                      .filter((n) => (n.notificationPostId ?? n.postId) === entry.postId)
-                      .map((n) => n.id),
-                  ),
-                })),
-            })),
+          observations: deps.observations.listPostSightings(postIds, limit),
+          // 投稿先は絞らずに全件並べる。投稿の監視対象は投稿者、リポスト元、会話の文脈など複数の記録から決まり、
+          // どれかが保持期間で消えると絞り込みが調べたい投稿先を落とすため。投稿先は数十件に収まる。
+          routes: deps.routes.listAll().map((route) => ({
+            ...route,
+            queue: queue
+              .filter((entry) => entry.routeId === route.id)
+              .map((entry) => ({
+                ...entry,
+                attempts: deps.deliveries.listAttemptsForQueueEntry(
+                  entry,
+                  notifications
+                    .filter((n) => (n.notificationPostId ?? n.postId) === entry.postId)
+                    .map((n) => n.id),
+                ),
+              })),
+          })),
         });
       },
     },
