@@ -12,6 +12,7 @@ import {
 } from "../services/deliveryService";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
+import { noteActivity } from "../utils/stallWatch";
 import { AdaptivePollScheduler, type PollCompletion } from "../x/adaptivePollScheduler";
 import type { XInternalGraphqlClient } from "../x/internalGraphql";
 
@@ -154,11 +155,13 @@ export class InternalPollCollector {
       const nowMs = Date.now();
       const now = new Date(nowMs).toISOString();
       const leaseUntil = new Date(nowMs + BACKLOG_LEASE_MS).toISOString();
+      noteActivity(`backlog.acquire ${this.deps.receiverLabel}/${target.handle}`);
       const progress = this.deps.backlog.acquire(target.id, this.deps.receiverId, now, leaseUntil);
       if (progress !== null && progress.nextCursor !== null) {
         return await this.pollTarget(target, signal, progress.nextCursor, progress.notBefore);
       }
     }
+    noteActivity(`backlog.prepareForStartup ${this.deps.receiverLabel}/${target.handle}`);
     const initializesBacklog = this.deps.backlog.prepareForStartup(target.id);
     const summary = await this.pollTarget(target, signal, undefined, undefined, initializesBacklog);
     const progress = this.deps.backlog.get(target.id);
@@ -194,6 +197,7 @@ export class InternalPollCollector {
     // 保存や配信で落ちても認証の判断材料は失わないよう、応答を得た時点で先に渡す。
     // 停止後に返ってきた応答は使わない。古い認証情報の結果が次のループへ持ち越される。
     if (!signal.aborted) this.deps.onPollResponse?.(result.responseStatus);
+    noteActivity(`observations.recordObservation ${this.deps.receiverLabel}/${target.handle}`);
     const stored = this.deps.observations.recordObservation(
       {
         receiverId: this.deps.receiverId,
@@ -317,6 +321,7 @@ export async function deliverNewInternalPosts(input: {
       reobserved: !post.isNew,
     });
   }
+  noteActivity(`delivery.deliverBatch ${input.target.handle}`);
   const attempt = await input.delivery.deliverBatch(
     deliverablePosts,
     input.attemptedAt,

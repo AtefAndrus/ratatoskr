@@ -8,6 +8,7 @@ import {
   type RetentionResult,
 } from "../db/repositories/maintenance";
 import { logger } from "../utils/logger";
+import { noteActivity } from "../utils/stallWatch";
 
 const RETENTION_INTERVAL_MS = 60 * 60_000;
 /** 1 トランザクションで本文を落とす行数。観測 1 件に投稿が十数行付くので、これで数万行に収まる。 */
@@ -36,6 +37,7 @@ export async function applyRetentionInChunks(input: {
   for (const spec of RAW_TEXT_TABLES) {
     for (;;) {
       if (input.signal?.aborted === true) return result;
+      noteActivity(`retention.clearRawTextBatch ${spec.table}`);
       const batch = input.maintenance.clearRawTextBatch(
         spec,
         input.rawBefore,
@@ -52,6 +54,7 @@ export async function applyRetentionInChunks(input: {
   for (const spec of EXPIRING_TABLES) {
     for (;;) {
       if (input.signal?.aborted === true) return result;
+      noteActivity(`retention.deleteExpiredBatch ${spec.table}`);
       const deleted = input.maintenance.deleteExpiredBatch(spec, input.rowsBefore, spec.batchSize);
       result.rowsDeleted += deleted;
       await yieldToEventLoop();
