@@ -91,7 +91,8 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 ## 投稿 1 件をたどる
 
 `/admin/posts/<postId>` は、指定した投稿 ID を Web Push の通知 (`postId` または `notificationPostId` が一致するもの)、キュー、内部 GraphQL の観測から探し、関係する監視対象の投稿先をすべて、その投稿先でのキュー行と並べて返す。
-関係する監視対象は、通知、観測、キュー行の対象に加え、通知か観測の投稿者が監視対象ならその対象も含む。
+関係する監視対象は、通知、観測、キュー行の対象に加え、通知か観測の投稿者、またはリポストの元投稿者が監視対象ならその対象も含む。
+引用元の投稿者は観測に保存していないので、引用した側の観測だけからは引用元の監視対象の投稿先は出ない。
 リポストはリポスト自体の ID で配信されるので、元投稿の ID で引いても、通知の `notificationPostId` と、元投稿を URL に持つキュー行からリポストの ID を拾い、`postIds` に並べてその ID でも観測とキューを引く。
 通知が保持期間で消え、キュー行も無いリポスト (投稿先の設定で弾かれたもの) は、元投稿の ID からはたどれない。
 その場合は `/admin/observations?target=<handle>` の観測を `/admin/observations/<id>` で開き、`referencedPostIdsJson` に元投稿を持つ行の `postId` で引き直す。
@@ -103,10 +104,11 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 | `observations.count` と `lastFetchedAt` | `postIds` のどれかに一致した観測投稿の行数と、それを含む観測の最後の取得時刻。投稿は周回ごとに取り直されるので行数は大きくなる |
 | `observations.sightings` | 観測投稿の行を古い順に `limit` 件。`isNew` は受信アカウントと監視対象の組での初出 (保持期間内)。`isTargetAuthor` が 0 の行 (他人の投稿や会話モジュールの一部) は配信の対象にならない |
 | `routes[].queue` | その投稿先のキュー行。`state` が `sent` なら `discordMessageId` に送ったメッセージがある。`source` は最後にこの行へ投入した経路で、送信に失敗した行を別の経路が投入し直すと書き換わる |
-| `routes[].queue[].attempts` | キュー行の投入直後 1 時間と最終更新直前 1 時間の送信履歴 (`sent`、`failed`、`skipped_duplicate`)。あいだの試行は省くので、試行の総数は `attemptCount` で見る。キュー行の `lastError` は再試行のたびに消えるので、遅れた理由はここで見る |
+| `routes[].queue[].attempts` | キュー行の投入直後 1 時間と最終更新直前 1 時間の送信履歴 (`sent`、`failed`、`skipped_duplicate`)。あいだの試行は省く。キュー行の `attemptCount` は送信に取りかかった回数で、`skipped_duplicate` を含まず、送信中に停止して結果を記録できなかった回も含む。キュー行の `lastError` は再試行のたびに消えるので、遅れた理由はここで見る |
 
 `attempts` は、キュー行の今の配信元と、この投稿の通知と観測に結びつく履歴だけを拾う。
 送信に失敗した行を別の経路が投入し直すと配信元が書き換わるので、元の配信元の通知や観測が保持期間で消えていると、それまでの失敗は `attempts` に出ない。
+通知と観測の行 ID は、最も新しい行が消えると次の行に使い回されるので、受信アカウントを削除して作り直した後は、送信に失敗し続けている行の `attempts` に別の投稿の履歴が混ざることがある。
 
 キューが導入される前に送った投稿の行は `discordMessageId` を持たない。
 送ったメッセージは、`attempts` に `sent` の行が残っていればその `discordMessageId` で分かる。

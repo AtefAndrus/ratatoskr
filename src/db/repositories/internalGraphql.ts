@@ -313,7 +313,7 @@ export class InternalGraphqlRepository {
       targetIds: (JSON.parse(summary.targetIdsJson) as Array<number | null>).filter(
         (id): id is number => id !== null,
       ),
-      // リポストや引用の元投稿者も、監視対象なら投稿先を並べる対象になる。
+      // リポストの元投稿者も、監視対象なら投稿先を並べる対象になる。引用元の投稿者は観測に保存していない。
       authorHandles: [
         ...(JSON.parse(summary.authorHandlesJson) as Array<string | null>),
         ...(JSON.parse(summary.referencedAuthorHandlesJson) as Array<string | null>),
