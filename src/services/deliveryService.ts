@@ -11,6 +11,7 @@ import { isMediaAllowed, type MediaFilter, type MediaTypes } from "../mediaFilte
 import { isKindAllowed, type PostKind, type RouteKinds } from "../postKinds";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
+import { noteActivity } from "../utils/stallWatch";
 
 const DELIVERY_RETRY_INTERVAL_MS = 30_000;
 
@@ -257,6 +258,7 @@ export class DeliveryService {
   private async sendReadyIds(readyIds: readonly number[]): Promise<void> {
     for (const id of readyIds) {
       const attemptedAt = new Date().toISOString();
+      noteActivity(`delivery.claimQueued ${id}`);
       const queued = this.deliveries.claimQueued(id, attemptedAt);
       if (queued === null) continue;
       try {

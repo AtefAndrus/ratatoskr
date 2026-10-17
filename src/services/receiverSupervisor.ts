@@ -13,6 +13,7 @@ import { InternalPollCollector, type InternalPollStatus } from "../pipeline/inte
 import { WebPushPipeline } from "../pipeline/webpushPipeline";
 import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
+import { noteActivity } from "../utils/stallWatch";
 import { waitFor } from "../utils/waitFor";
 import { generateWebPushKeys } from "../webpush/keys";
 import type { InternalGraphqlConfigurationProvider } from "../x/internalGraphql";
@@ -111,6 +112,7 @@ export class ReceiverSupervisor {
   async run(signal: AbortSignal): Promise<void> {
     try {
       while (!signal.aborted) {
+        noteActivity("receivers.sync");
         this.syncReceivers(signal);
         await waitFor(RECEIVER_SYNC_INTERVAL_MS, signal, (wake) => {
           this.syncWaiters.add(wake);

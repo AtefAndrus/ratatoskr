@@ -27,6 +27,7 @@ import { ReceiverSupervisor } from "./services/receiverSupervisor";
 import { WatchService } from "./services/watchService";
 import { logger } from "./utils/logger";
 import { metrics } from "./utils/metrics";
+import { startStallWatch } from "./utils/stallWatch";
 import { InternalGraphqlConfigurationProvider } from "./x/internalGraphql";
 
 async function bootstrap(): Promise<void> {
@@ -104,6 +105,7 @@ async function bootstrap(): Promise<void> {
   });
 
   const abortController = new AbortController();
+  startStallWatch(abortController.signal);
   const backgroundTasks = [
     supervisor.run(abortController.signal),
     delivery.run(abortController.signal),
