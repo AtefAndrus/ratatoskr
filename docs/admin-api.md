@@ -17,6 +17,7 @@ X 側の仕様変更を調査するために、保存した生データをその
 | `/admin/deliveries` | Discord 送信の試行履歴 | `limit`, `status` (`sent`, `failed`, `skipped_duplicate`) |
 | `/admin/observations` | 内部 GraphQL の観測メタデータ | `limit`, `target`, `errors=1` |
 | `/admin/observations/<id>` | 観測 1 件の生応答本文と抽出した投稿 | |
+| `/admin/posts/<postId>` | 投稿 1 件の通知、観測、対象の投稿先とその投稿先でのキュー状態 | `limit` (観測の行数) |
 | `/admin/exchanges` | X や参照データ取得元との HTTP やり取り | `limit`, `source` |
 
 `limit` は 1 から 1000 で既定は 50 である。
@@ -73,6 +74,7 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 
 | 問い | 見る場所 | 読み方 |
 | ---- | -------- | ------ |
+| ある投稿が届かなかった、または遅れた理由 | `/admin/posts/<postId>` | 下の「投稿 1 件をたどる」を参照する |
 | 停止中投稿の補完がどこまで進んだか | `/admin/backlog` の `progress` | `state` が `pending` なら `nextCursor` から再開する。`lastStopReason` は直近ページの保存、429などの取得失敗、既知投稿との重なり、Bottomカーソルの欠落、カーソル循環、固定投稿以外の投稿枠も判別できないエントリも無いページ (`timeline_exhausted`)、投稿枠がすべて `notBefore` より古いページ (`not_before_reached`)、400 ページの上限 (`page_limit_reached`) のいずれで止まったかを示す。`page_limit_reached` では、それより先のページにある停止中の投稿は補完されない。X の応答が変わって終端を判定できなくなった可能性があるので、`/admin/observations/<id>` で直近の補完ページの生応答を確かめる |
 | Discord送信が滞留しているか | `/admin/backlog` の `queue` | `pending` は未送信、`sending` は送信中、`failed` は直近の送信に失敗して再試行を待つ件数である。送信中にプロセスが停止した行は次回起動時に `pending` へ戻る |
 | rate limit に余裕があるか | `/admin/observations` の `rateLimitLimit`、`rateLimitRemaining`、`rateLimitResetAt` | 上限は応答ヘッダから取るので `rateLimitLimit` を見る (2026-09-05 の実測では 500 / 15 分)。`rateLimitRemaining` が `AdaptivePollScheduler` の予約枠 100 に近づくとポーリングが止まるので、そこまでの余裕で判断する |
@@ -85,3 +87,20 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 | どちらの経路が先に投稿を拾ったか | `/admin/deliveries` の `status` と `source` | `sent` の `source` は配信権 (claim) を先に取った側。後から同じ投稿を見つけた側は `skipped_duplicate` になる。もう一方が取りこぼしたことを意味しない。内部 GraphQL の `skipped_duplicate` は、受信アカウントごとに保持期間内の観測で初めて見た投稿でだけ記録し、同じ受信アカウントが同じ投稿を毎周回取り直しても増えない。`sent` と `failed` は再取得時の送信でも記録する |
 
 `/admin/observations` と `/admin/exchanges` は `limit` の既定が 50 なので、分布を見るときは `limit=1000` まで上げる。
+
+## 投稿 1 件をたどる
+
+`/admin/posts/<postId>` は、指定した投稿 ID を Web Push の通知 (`postId` または `notificationPostId` が一致するもの) と内部 GraphQL の観測から探し、関係する監視対象の投稿先をすべて、その投稿先でのキュー行と並べて返す。
+リポストの通知は URI が元投稿を指すので、元投稿の ID で引いても通知からリポスト自体の ID を拾い、`postIds` に並べてその ID でも観測とキューを引く。
+`postedAt` は投稿 ID の Snowflake から復元した時刻である。
+
+| フィールド | 読み方 |
+| ---------- | ------ |
+| `notifications` | 受信した Web Push 通知。空なら Web Push では届いていないか、保持期間で消えている |
+| `observations.count` と `lastFetchedAt` | 内部 GraphQL がこの投稿を含むページを取得した回数と最後の時刻。投稿は周回ごとに取り直されるので回数は大きくなる |
+| `observations.sightings` | 観測の行を古い順に `limit` 件。`isNew` は受信アカウントごとの初出、`isTargetAuthor` が 0 の行 (他人の投稿や会話モジュールの一部) は配信の対象にならない |
+| `routes[].queue` | その投稿先のキュー行。`state` が `sent` なら `discordMessageId` に送ったメッセージがある。`source` は配信権を先に取った経路 |
+
+キュー行の無い投稿先は、送る前に弾かれたか、どの経路もその投稿を配信対象として見ていない。
+弾く条件は `routes[]` の `enabled`、`kinds`、`mediaFilter` と、`createdAt` が `postedAt` より後であることである。
+弾いた投稿は個別には記録せず、件数だけが `/admin/metrics` の `delivery.filtered` 系カウンタに残る。

@@ -7,6 +7,7 @@ import type { NotificationRepository } from "../db/repositories/notifications";
 import type { ReceiverRepository } from "../db/repositories/receivers";
 import type { RouteRepository } from "../db/repositories/routes";
 import type { TargetRepository } from "../db/repositories/targets";
+import { xSnowflakeTimestampMs } from "../services/deliveryService";
 import type { ReceiverStatus } from "../services/receiverSupervisor";
 import { getRecentLogs, type LogLevel } from "../utils/logger";
 import { metrics } from "../utils/metrics";
@@ -171,6 +172,41 @@ export function createAdminRouter(
         const observation = deps.observations.getResponseText(id);
         if (observation === null) return jsonError(404, "Observation not found");
         return json({ ...observation, posts: deps.observations.listPostsForObservation(id) });
+      },
+    },
+    {
+      match: (pathname) => pathname.startsWith("/admin/posts/"),
+      handle: (url) => {
+        const postId = url.pathname.slice("/admin/posts/".length);
+        if (!/^\d+$/.test(postId)) return jsonError(400, "Invalid post id");
+        const limit = readLimit(url);
+        if (limit instanceof Response) return limit;
+        const notifications = deps.notifications.listByPostId(postId);
+        const postIds = [
+          ...new Set([postId, ...notifications.flatMap((n) => n.notificationPostId ?? [])]),
+        ];
+        const observations = deps.observations.listPostSightings(postIds, limit);
+        const queue = deps.deliveries.listQueueByPostIds(postIds);
+        const targetIds = new Set([
+          ...notifications.flatMap((n) => n.targetId ?? []),
+          ...observations.targetIds,
+          ...queue.map((entry) => entry.targetId),
+        ]);
+        const postedAtMs = xSnowflakeTimestampMs(postId);
+        return json({
+          postId,
+          postedAt: postedAtMs === null ? null : new Date(postedAtMs).toISOString(),
+          postIds,
+          notifications,
+          observations,
+          routes: deps.routes
+            .listAll()
+            .filter((route) => targetIds.has(route.targetId))
+            .map((route) => ({
+              ...route,
+              queue: queue.filter((entry) => entry.routeId === route.id),
+            })),
+        });
       },
     },
     {

@@ -51,6 +51,25 @@ export interface DeliveryView {
   error: string | null;
 }
 
+export interface QueueEntryView {
+  id: number;
+  targetId: number;
+  routeId: number;
+  postId: string;
+  postUrl: string;
+  kindsJson: string;
+  postCreatedAt: string;
+  source: DeliverySource;
+  sourceRecordId: number;
+  state: DeliveryQueueState;
+  attemptCount: number;
+  lastAttemptedAt: string | null;
+  discordMessageId: string | null;
+  lastError: string | null;
+  queuedAt: string;
+  updatedAt: string;
+}
+
 export class DeliveryRepository {
   constructor(private readonly db: Database) {}
 
@@ -208,6 +227,23 @@ export class DeliveryRepository {
          WHERE id = $id`,
       )
       .run({ id, error, failedAt });
+  }
+
+  listQueueByPostIds(postIds: readonly string[]): QueueEntryView[] {
+    return this.db
+      .query(
+        `SELECT queue.id, queue.target_id AS targetId, queue.route_id AS routeId,
+                queue.post_id AS postId, queue.post_url AS postUrl, queue.kinds_json AS kindsJson,
+                queue.post_created_at AS postCreatedAt, queue.source,
+                queue.source_record_id AS sourceRecordId, queue.state,
+                queue.attempt_count AS attemptCount, queue.last_attempted_at AS lastAttemptedAt,
+                queue.discord_message_id AS discordMessageId, queue.last_error AS lastError,
+                queue.created_at AS queuedAt, queue.updated_at AS updatedAt
+         FROM delivery_queue AS queue
+         WHERE queue.post_id IN (SELECT value FROM json_each($postIds))
+         ORDER BY queue.id`,
+      )
+      .all({ postIds: JSON.stringify(postIds) }) as QueueEntryView[];
   }
 
   queueCounts(): DeliveryQueueCounts {
