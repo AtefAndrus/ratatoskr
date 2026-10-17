@@ -276,7 +276,8 @@ export class InternalGraphqlRepository {
       .query(
         `SELECT count(*) AS count, max(observations.fetched_at) AS lastFetchedAt,
                 json_group_array(DISTINCT observations.target_id) AS targetIdsJson,
-                json_group_array(DISTINCT posts.author_handle) AS authorHandlesJson
+                json_group_array(DISTINCT posts.author_handle) AS authorHandlesJson,
+                json_group_array(DISTINCT posts.referenced_author_handle) AS referencedAuthorHandlesJson
          FROM internal_graphql_observation_posts AS posts
          JOIN internal_graphql_observations AS observations ON observations.id = posts.observation_id
          WHERE posts.post_id IN (SELECT value FROM json_each($postIds))`,
@@ -286,6 +287,7 @@ export class InternalGraphqlRepository {
       lastFetchedAt: string | null;
       targetIdsJson: string;
       authorHandlesJson: string;
+      referencedAuthorHandlesJson: string;
     };
     const sightings = this.db
       .query(
@@ -311,9 +313,11 @@ export class InternalGraphqlRepository {
       targetIds: (JSON.parse(summary.targetIdsJson) as Array<number | null>).filter(
         (id): id is number => id !== null,
       ),
-      authorHandles: (JSON.parse(summary.authorHandlesJson) as Array<string | null>).filter(
-        (handle): handle is string => handle !== null,
-      ),
+      // リポストや引用の元投稿者も、監視対象なら投稿先を並べる対象になる。
+      authorHandles: [
+        ...(JSON.parse(summary.authorHandlesJson) as Array<string | null>),
+        ...(JSON.parse(summary.referencedAuthorHandlesJson) as Array<string | null>),
+      ].filter((handle): handle is string => handle !== null),
       sightings,
     };
   }

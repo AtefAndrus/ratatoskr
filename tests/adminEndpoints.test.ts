@@ -398,7 +398,72 @@ describe("admin endpoints", () => {
           sourceRecordId,
           queuedAt: queued,
         });
-      // 観測投稿の行は作らない。保持期間で元の観測が消えた状態にあたる。
+      const origin = addTarget(context, { handle: "Author" });
+      context.routes.add({ targetId: origin, guildId: "g", channelId: "c3" });
+      // 監視対象 Author の元投稿そのものは観測せず、example のリポストだけを観測する。
+      const sighting = context.observations.recordObservation(
+        {
+          receiverId: addReceiver(context),
+          targetId: target,
+          fetchedAt: "2026-10-15T00:14:00.000Z",
+          completedAt: "2026-10-15T00:14:00.000Z",
+          queryId: "q",
+          endpoint: "UserTweets",
+          variablesJson: "{}",
+          featuresJson: "{}",
+          transactionId: null,
+          responseStatus: 200,
+          responseText: null,
+          rateLimitLimit: null,
+          rateLimitRemaining: null,
+          rateLimitResetAt: null,
+          error: null,
+          parseError: null,
+        },
+        [
+          {
+            postId: firstRepost,
+            createdAt: null,
+            authorUserId: null,
+            authorHandle: "example",
+            typesJson: '["repost"]',
+            referencedPostIdsJson: JSON.stringify([originalId]),
+            referencedAuthorHandle: "author",
+            mediaTypesJson: null,
+            rawResultJson: "{}",
+            isTargetAuthor: 1,
+          },
+        ],
+      );
+      const sightingId = sighting.targetPosts[0]?.id ?? 0;
+      const notificationFor = (repostId: string) =>
+        context.notifications.insertParsed({
+          frameId: context.notifications.insertFrame({
+            receiverId: 1,
+            receivedAt: queued,
+            rawText: "{}",
+            messageType: null,
+            channelId: null,
+            version: null,
+            encryptedData: null,
+            headersJson: null,
+          }),
+          parsedAt: queued,
+          parserVersion: "test",
+          decryptedText: null,
+          payloadJson: null,
+          notificationKind: "post",
+          postId: originalId,
+          postUrl: `https://x.com/author/status/${originalId}`,
+          authorHandle: null,
+          notificationPostId: repostId,
+          notificationTitle: null,
+          targetId: target,
+          parseError: null,
+        });
+      const firstNotification = notificationFor(firstRepost);
+      const secondNotification = notificationFor(secondRepost);
+      // キュー行自身の配信元 (501、502) の観測投稿は作らない。保持期間で元の観測が消えた状態にあたる。
       enqueue(route.id, firstRepost, `https://x.com/author/status/${originalId}`, 501);
       enqueue(route.id, secondRepost, `https://x.com/author/status/${originalId}`, 502);
       enqueue(migrated.id, firstRepost, `https://x.com/example/status/${firstRepost}`, 501);
@@ -412,14 +477,17 @@ describe("admin endpoints", () => {
           "UPDATE delivery_queue SET updated_at = '2026-10-15T00:30:00.000Z' WHERE source_record_id = 502",
         )
         .run();
-      for (const [sourceRecordId, attemptedAt, status] of [
-        [501, "2026-10-15T00:10:00.000Z", "failed"],
-        [501, "2026-10-16T00:00:00.000Z", "failed"],
-        [501, "2026-10-16T23:50:00.000Z", "failed"],
-        [502, "2026-10-15T00:20:00.000Z", "sent"],
+      for (const [source, sourceRecordId, attemptedAt, status] of [
+        ["internal_graphql", 501, "2026-10-15T00:10:00.000Z", "failed"],
+        ["webpush", firstNotification, "2026-10-15T00:12:00.000Z", "failed"],
+        ["internal_graphql", sightingId, "2026-10-15T00:15:00.000Z", "failed"],
+        ["internal_graphql", 502, "2026-10-15T00:20:00.000Z", "sent"],
+        ["webpush", secondNotification, "2026-10-15T00:25:00.000Z", "skipped_duplicate"],
+        ["internal_graphql", 501, "2026-10-16T00:00:00.000Z", "failed"],
+        ["internal_graphql", 501, "2026-10-16T23:50:00.000Z", "failed"],
       ] as const) {
         context.deliveries.record({
-          source: "internal_graphql",
+          source,
           sourceRecordId,
           routeId: route.id,
           attemptedAt,
@@ -448,10 +516,17 @@ describe("admin endpoints", () => {
         ]),
       );
       expect(attemptsByPost).toEqual({
-        [firstRepost]: ["2026-10-15T00:10:00.000Z", "2026-10-16T23:50:00.000Z"],
-        [secondRepost]: ["2026-10-15T00:20:00.000Z"],
+        [firstRepost]: [
+          "2026-10-15T00:10:00.000Z",
+          "2026-10-15T00:12:00.000Z",
+          "2026-10-15T00:15:00.000Z",
+          "2026-10-16T23:50:00.000Z",
+        ],
+        [secondRepost]: ["2026-10-15T00:20:00.000Z", "2026-10-15T00:25:00.000Z"],
       });
+      expect(body.routes.map((r) => r.channelId)).toEqual(["c1", "c2", "c3"]);
       expect(body.routes[1]?.queue.map((entry) => entry.postId)).toEqual([firstRepost]);
+      expect(body.routes[2]?.queue).toEqual([]);
     } finally {
       context.db.close();
     }

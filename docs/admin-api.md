@@ -105,6 +105,9 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 | `routes[].queue` | その投稿先のキュー行。`state` が `sent` なら `discordMessageId` に送ったメッセージがある。`source` は最後にこの行へ投入した経路で、送信に失敗した行を別の経路が投入し直すと書き換わる |
 | `routes[].queue[].attempts` | キュー行の投入直後 1 時間と最終更新直前 1 時間の送信履歴 (`sent`、`failed`、`skipped_duplicate`)。あいだの試行は省くので、試行の総数は `attemptCount` で見る。キュー行の `lastError` は再試行のたびに消えるので、遅れた理由はここで見る |
 
+`attempts` は、キュー行の今の配信元と、この投稿の通知と観測に結びつく履歴だけを拾う。
+送信に失敗した行を別の経路が投入し直すと配信元が書き換わるので、元の配信元の通知や観測が保持期間で消えていると、それまでの失敗は `attempts` に出ない。
+
 キューが導入される前に送った投稿の行は `discordMessageId` を持たない。
 送ったメッセージは、`attempts` に `sent` の行が残っていればその `discordMessageId` で分かる。
 
@@ -112,7 +115,7 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 弾く条件は次のとおりで、どれも投稿先ごとの記録を残さない。
 
 - `routes[].enabled` が false である。
-- `routes[].kinds` が投稿の種別を許していない。種別は観測の `typesJson` か、通知の投稿者と監視対象の違い (違えばリポスト) から読む。
+- `routes[].kinds` が投稿の種別を許していない。内部 GraphQL の種別は観測の `typesJson` で決まる。Web Push は通知の投稿者が監視対象と違えばリポストとし、同じなら投稿 1 件を取得して通常投稿か引用かを決める。その取得に失敗すると通常投稿と引用の両方とみなし、どちらかを許す投稿先には送る。
 - `routes[].mediaFilter` が `photo` で、投稿に画像が無いか、画像の有無を判定できなかった。
 - 投稿時刻が `routes[].createdAt` より前である。比べる時刻は配信に使った ID のもので、リポストならリポスト自体の時刻になる。内部 GraphQL は観測の `createdAt` を使い、無いときと Web Push では `postIds[].postedAt` を使う。
 - 停止中投稿の補完で、観測の `createdAt` が `/admin/backlog` の `notBefore` より前か、`createdAt` が無い。補完のこの判定は投稿 ID の時刻で補わない。
