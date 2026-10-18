@@ -73,6 +73,55 @@ export class BacklogRepository {
     this.startupInitialization.set(targetId, "complete");
   }
 
+  /**
+   * 補完の既知境界にする正常取得を、初回は最も古いもの、2 回目以降はカーソルなしの最も新しいものから選ぶ。
+   * 受信アカウントごとに (receiver_id, target_id, fetched_at) の索引を順にたどり、最初に条件を満たした行で止める。
+   * target_id と fetched_at だけで全受信アカウントをまとめて引かないのは、使える索引が fetched_at だけになり、
+   * 期間内の全対象の観測行を 1 行ずつ表から読んで並べ替えるためで、本番では対象ごとに約 30 秒イベントループが止まった。
+   */
+  private findBaseline(
+    targetId: number,
+    routeCreatedAt: string,
+    now: string,
+    earliest: boolean,
+  ): { id: number; fetchedAt: string } | null {
+    const order = earliest ? "ASC" : "DESC";
+    const query = this.db.query(
+      `SELECT id, fetched_at AS fetchedAt
+       FROM internal_graphql_observations
+       WHERE receiver_id = $receiverId AND target_id = $targetId
+         AND fetched_at >= $routeCreatedAt AND fetched_at < $now
+         AND response_status = 200
+         AND ($earliest = 1 OR json_type(variables_json, '$.cursor') IS NULL)
+         AND error IS NULL AND parse_error IS NULL
+       ORDER BY fetched_at ${order}, id ${order}
+       LIMIT 1`,
+    );
+    const receiverIds = (
+      this.db.query("SELECT id FROM receivers ORDER BY id").all() as Array<{ id: number }>
+    ).map((row) => row.id);
+    let best: { id: number; fetchedAt: string } | null = null;
+    for (const receiverId of receiverIds) {
+      const candidate = query.get({
+        receiverId,
+        targetId,
+        routeCreatedAt,
+        now,
+        earliest: earliest ? 1 : 0,
+      }) as { id: number; fetchedAt: string } | null;
+      if (candidate === null) continue;
+      const isBetter =
+        best === null ||
+        (earliest
+          ? candidate.fetchedAt < best.fetchedAt ||
+            (candidate.fetchedAt === best.fetchedAt && candidate.id < best.id)
+          : candidate.fetchedAt > best.fetchedAt ||
+            (candidate.fetchedAt === best.fetchedAt && candidate.id > best.id));
+      if (isBetter) best = candidate;
+    }
+    return best;
+  }
+
   ensure(targetId: number, now = new Date().toISOString()): BacklogProgress | null {
     const route = this.db
       .query("SELECT min(created_at) AS createdAt FROM routes WHERE target_id = $targetId")
@@ -80,25 +129,7 @@ export class BacklogRepository {
     if (route.createdAt === null) return null;
     const existing = this.get(targetId);
     if (existing?.state === "pending") return existing;
-    const latestBaseline = existing === null ? 0 : 1;
-    const baseline = this.db
-      .query(
-        `SELECT id, fetched_at AS fetchedAt
-         FROM internal_graphql_observations
-         WHERE target_id = $targetId AND fetched_at >= $routeCreatedAt
-           AND fetched_at < $now
-           AND response_status = 200 AND error IS NULL AND parse_error IS NULL
-           AND ($latestBaseline = 0 OR json_type(variables_json, '$.cursor') IS NULL)
-         ORDER BY CASE WHEN $latestBaseline = 0 THEN fetched_at END,
-                  CASE WHEN $latestBaseline = 1 THEN fetched_at END DESC,
-                  CASE WHEN $latestBaseline = 0 THEN id END,
-                  CASE WHEN $latestBaseline = 1 THEN id END DESC
-         LIMIT 1`,
-      )
-      .get({ targetId, routeCreatedAt: route.createdAt, now, latestBaseline }) as {
-      id: number;
-      fetchedAt: string;
-    } | null;
+    const baseline = this.findBaseline(targetId, route.createdAt, now, existing === null);
     const knownPostIds =
       baseline === null
         ? []
