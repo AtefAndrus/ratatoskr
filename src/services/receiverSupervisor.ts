@@ -28,7 +28,7 @@ import {
   authOutcomeOfResponse,
 } from "./authFailureTracker";
 import type { DeliveryService } from "./deliveryService";
-import { assignTargets } from "./pollAssignment";
+import { selectPollTargets } from "./pollAssignment";
 import { PostLookupCache } from "./postLookupCache";
 
 const RECEIVER_SYNC_INTERVAL_MS = 60_000;
@@ -310,6 +310,7 @@ export class ReceiverSupervisor {
    * 割り当ての母集団を取り直す。
    * 同期の周期だけで更新すると、起動直後は collector がまだ無いので母集団が空になり、
    * 全受信が全対象を取得する状態が次の周期まで続く。減った側も同じだけ担当枠を抱え続ける。
+   * 認証の状態はここで固めず、割り当てのたびに読む。固めると状態が変わるたびに取り直す必要がある。
    */
   private refreshPollingReceivers(): void {
     this.pollingReceiverIds = [...this.running]
@@ -358,7 +359,15 @@ export class ReceiverSupervisor {
           observations: this.deps.observations,
           backlog: this.deps.backlog,
           delivery: this.deps.delivery,
-          selectTargets: (targets) => assignTargets(targets, receiverId, this.pollingReceiverIds),
+          selectTargets: (targets) =>
+            selectPollTargets(
+              targets,
+              { id: receiverId, failing: entry.auth.health === "failing" },
+              this.pollingReceiverIds.map((id) => ({
+                id,
+                failing: this.running.get(id)?.auth.health === "failing",
+              })),
+            ),
           onPollResponse: (responseStatus) => {
             this.recordAuthOutcome(entry, authOutcomeOfResponse(responseStatus));
           },

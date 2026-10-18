@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { assignTargets, POLL_REDUNDANCY } from "../src/services/pollAssignment";
+import { assignTargets, POLL_REDUNDANCY, selectPollTargets } from "../src/services/pollAssignment";
 
 const targets = Array.from({ length: 40 }, (_, index) => ({ id: index + 1 }));
 
@@ -102,5 +102,49 @@ describe("監視対象の受信アカウントへの振り分け", () => {
 
   test("対象が無ければ空を返す", () => {
     expect(assignTargets([], 1, [1, 2, 3])).toEqual([]);
+  });
+});
+
+function receivers(failingIds: readonly number[]): Array<{ id: number; failing: boolean }> {
+  return [1, 2, 3].map((id) => ({ id, failing: failingIds.includes(id) }));
+}
+
+function covering(targetId: number, failingIds: readonly number[]): number[] {
+  return receivers(failingIds)
+    .filter((self) => !self.failing)
+    .filter((self) =>
+      selectPollTargets(targets, self, receivers(failingIds)).some(
+        (target) => target.id === targetId,
+      ),
+    )
+    .map((self) => self.id);
+}
+
+describe("認証が切れている受信アカウントを除いた振り分け", () => {
+  test("切れた 1 台の担当を残りの 2 台が引き取り、どの対象も 2 台が追う", () => {
+    for (const target of targets) {
+      expect(covering(target.id, [3])).toEqual([1, 2]);
+    }
+  });
+
+  test("切れた 2 台の担当を最後の 1 台が引き取り、全対象を追う", () => {
+    expect(selectPollTargets(targets, { id: 1, failing: false }, receivers([2, 3]))).toHaveLength(
+      targets.length,
+    );
+  });
+
+  test("切れた受信は回復を確かめる 1 件だけを取得する", () => {
+    for (const failingIds of [[3], [1, 2, 3]]) {
+      expect(
+        selectPollTargets(targets, { id: 3, failing: true }, receivers(failingIds)),
+      ).toHaveLength(1);
+    }
+  });
+
+  test("切れていなければ、母集団から外さずに振り分ける", () => {
+    const self = { id: 2, failing: false };
+    expect(selectPollTargets(targets, self, receivers([]))).toEqual(
+      assignTargets(targets, 2, [1, 2, 3]),
+    );
   });
 });
