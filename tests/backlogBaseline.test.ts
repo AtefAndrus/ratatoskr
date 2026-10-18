@@ -10,6 +10,7 @@ function observe(
     fetchedAt: string;
     status?: number;
     error?: string | null;
+    parseError?: string;
     cursor?: string;
   },
 ): number {
@@ -30,7 +31,7 @@ function observe(
       rateLimitRemaining: null,
       rateLimitResetAt: null,
       error: input.error ?? null,
-      parseError: null,
+      parseError: input.parseError ?? null,
     },
     [],
   ).observationId;
@@ -44,6 +45,12 @@ test("補完の既知境界は、受信アカウントをまたいで最も古�
     const target = addTarget(context, { handle: "example" });
     context.routes.add({ targetId: target, guildId: "g", channelId: "c" });
     context.db.query("UPDATE routes SET created_at = '2026-10-01T00:00:00.000Z'").run();
+    observe(context, {
+      receiverId: first,
+      targetId: target,
+      fetchedAt: "2026-10-01T12:00:00.000Z",
+      parseError: "unexpected shape",
+    });
     observe(context, {
       receiverId: second,
       targetId: target,
@@ -75,6 +82,12 @@ test("補完の既知境界は、受信アカウントをまたいで最も古�
       targetId: target,
       fetchedAt: "2026-10-05T00:00:00.000Z",
       error: "parse failed",
+    });
+    observe(context, {
+      receiverId: second,
+      targetId: target,
+      fetchedAt: "2026-10-05T12:00:00.000Z",
+      parseError: "unexpected shape",
     });
     observe(context, {
       receiverId: second,
