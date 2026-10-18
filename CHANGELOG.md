@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.8.2] - 2026-10-18
+
+
+### Fixed
+
+- 補完の既知境界を受信アカウントごとの索引で引く (#68)
+
+
 ## [0.8.1] - 2026-10-17
 
 
@@ -227,6 +235,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.8.2]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/AtefAndrus/ratatoskr/compare/v0.7.1...v0.7.2
