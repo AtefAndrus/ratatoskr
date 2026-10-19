@@ -134,6 +134,33 @@ describe("観測済みの判定", () => {
     }
   });
 
+  test("直近の観測は上限の件数で読むのをやめる", () => {
+    const context = createTestContext();
+    try {
+      const mine = addReceiver(context, "mine");
+      const other = addReceiver(context, "other");
+      const target = addTarget(context, { handle: "example" });
+      observe(context, mine, target, "edge");
+      for (let index = 0; index < RECENT_SIGHTING_LIMIT - 1; index += 1) {
+        observe(context, other, target, "edge");
+      }
+      const recent = context.db.query(RECENT_SIGHTINGS_SQL);
+      const key = {
+        receiverId: mine,
+        targetId: target,
+        postId: "edge",
+        limit: RECENT_SIGHTING_LIMIT,
+      };
+      // 自分の観測がちょうど上限の件数目にあれば、直近の範囲で見つかる
+      expect(recent.get(key)).toEqual({ sightings: RECENT_SIGHTING_LIMIT, seen: 1 });
+      observe(context, other, target, "edge");
+      // 1 件押し出されると範囲から外れ、読むのは上限の件数で止まる
+      expect(recent.get(key)).toEqual({ sightings: RECENT_SIGHTING_LIMIT, seen: 0 });
+    } finally {
+      context.db.close();
+    }
+  });
+
   test("組の観測からたどるのは、直近の観測が上限に届いて組を含まないときだけ", () => {
     const context = createTestContext();
     try {
