@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.8.3] - 2026-10-19
+
+
+### Documentation
+
+- 戻されたデプロイの原因を Coolify のログで特定する手順を足す (#73)
+- 戻されたデプロイの調査でヘルスチェックの失敗の種類を先に切り分ける (#75)
+
+
+### Fixed
+
+- Release-publish のテストで親の GIT_* を子の git に継承しない (#72)
+- 認証が切れた受信アカウントの担当を残りの受信に重ねて持たせる (#74)
+
+
 ## [0.8.2] - 2026-10-18
 
 
@@ -235,6 +250,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.8.3]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/AtefAndrus/ratatoskr/compare/v0.7.2...v0.8.0
