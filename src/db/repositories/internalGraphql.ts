@@ -1,21 +1,34 @@
 import type { Database } from "bun:sqlite";
 
 /**
- * 受信アカウントと監視対象の組で、その投稿を前に観測したか。
- * 組の観測からたどる計画にしないのは、本番では 1 組に観測が 1 万件以上あり、
+ * 受信アカウントと監視対象の組がその投稿を前に観測したかは、まず投稿 ID の索引から新しい順に
+ * 最大この件数だけ観測を見て決める。初めて見る投稿は 0 件で終わり、組が毎周回見ている投稿は
+ * 直近の数件で当たる。組の観測からたどるだけにしないのは、本番では 1 組に観測が 1 万件以上あり、
  * 初めて見る投稿や新しい投稿ではその全件を、取得 1 回につき投稿の数だけたどるためである。
- * 投稿 ID の索引から引き、自分の直近の観測が先に当たるよう新しい順にたどる。
- * 古い順にしないのは、ほかの受信アカウントが長く見てきた投稿を後から担当した受信アカウントが、毎回その全件をたどるため。
- * いまの SQLite は ORDER BY だけでも投稿 ID の索引を先に引くが、統計が入って計画が変わっても順を保つよう CROSS JOIN でも固定する。
  */
-export const HAS_SEEN_POST_SQL = `SELECT 1
-  FROM internal_graphql_observation_posts AS posts
-  CROSS JOIN internal_graphql_observations AS observations
-    ON observations.id = posts.observation_id
+export const RECENT_SIGHTING_LIMIT = 200;
+
+export const RECENT_SIGHTINGS_SQL = `SELECT count(*) AS sightings,
+    coalesce(max(observations.receiver_id = $receiverId AND observations.target_id = $targetId), 0) AS seen
+  FROM (
+    SELECT observation_id FROM internal_graphql_observation_posts
+    WHERE post_id = $postId
+    ORDER BY observation_id DESC
+    LIMIT $limit
+  ) AS recent
+  LEFT JOIN internal_graphql_observations AS observations ON observations.id = recent.observation_id`;
+
+/**
+ * 直近の観測に組が無く、件数が上限に届いたときだけ組の観測からたどる。
+ * 会話の文脈として多くの対象に出る投稿を新しく担当した組が見る場合などで、投稿 ID からだけたどると
+ * ほかの組の観測を全件読むことになる。この経路の重さは、どちらを先に引いても組の観測の件数で抑えられる。
+ */
+export const HAS_SEEN_BY_PAIR_SQL = `SELECT 1
+  FROM internal_graphql_observations AS observations
+  CROSS JOIN internal_graphql_observation_posts AS posts
+    ON posts.observation_id = observations.id AND posts.post_id = $postId
   WHERE observations.receiver_id = $receiverId
     AND observations.target_id = $targetId
-    AND posts.post_id = $postId
-  ORDER BY posts.observation_id DESC
   LIMIT 1`;
 
 export interface NewObservation {
@@ -132,7 +145,18 @@ export class InternalGraphqlRepository {
     // 初出判定は受信アカウントと監視対象の組ごとに行う。
     // 受信アカウントを追加した直後に過去投稿を「新規」と誤判定しても、
     // 配信側の起動時刻境界と経路単位の重複排除で Discord には送られない。
-    const hasSeenPost = this.db.query(HAS_SEEN_POST_SQL);
+    const recentSightings = this.db.query(RECENT_SIGHTINGS_SQL);
+    const hasSeenByPair = this.db.query(HAS_SEEN_BY_PAIR_SQL);
+    const hasSeenPost = (postId: string): boolean => {
+      const key = { receiverId: observation.receiverId, targetId: observation.targetId, postId };
+      const recent = recentSightings.get({ ...key, limit: RECENT_SIGHTING_LIMIT }) as {
+        sightings: number;
+        seen: number;
+      };
+      if (recent.seen === 1) return true;
+      if (recent.sightings < RECENT_SIGHTING_LIMIT) return false;
+      return hasSeenByPair.get(key) !== null;
+    };
     const insertPost = this.db.query(
       `INSERT INTO internal_graphql_observation_posts (
          observation_id, post_id, created_at, author_user_id, author_handle,
@@ -152,14 +176,7 @@ export class InternalGraphqlRepository {
       const newTargetPosts: NewTargetPost[] = [];
       const targetPosts: NewTargetPost[] = [];
       for (const post of posts) {
-        const isNew =
-          hasSeenPost.get({
-            receiverId: observation.receiverId,
-            targetId: observation.targetId,
-            postId: post.postId,
-          }) === null
-            ? 1
-            : 0;
+        const isNew = hasSeenPost(post.postId) ? 0 : 1;
         targetPostCount += post.isTargetAuthor;
         newPostCount += isNew * post.isTargetAuthor;
         // 初出でない投稿の生 JSON は保存しない。同じ投稿を毎周回入れ直すことになり、
