@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.8.6] - 2026-10-19
+
+
+### Fixed
+
+- /admin/metrics の行数の数え方を 1 回の count(*) に戻す (#78)
+
+
 ## [0.8.5] - 2026-10-19
 
 
@@ -266,6 +274,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.8.6]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.2...v0.8.3
