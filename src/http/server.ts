@@ -33,9 +33,9 @@ export interface HttpServerOptions {
  */
 export function startHttpServer(options: HttpServerOptions): ReturnType<typeof Bun.serve> {
   const startedAt = Date.now();
-  const server = Bun.serve({
+  const httpServer = Bun.serve({
     port: options.port,
-    async fetch(req) {
+    async fetch(req, server) {
       const url = new URL(req.url);
       if (url.pathname === "/health") {
         const connected = options.client.isReady();
@@ -59,11 +59,12 @@ export function startHttpServer(options: HttpServerOptions): ReturnType<typeof B
         });
       }
       if (url.pathname.startsWith("/admin/")) {
+        server.timeout(req, 25);
         return await options.adminRouter(req);
       }
       return new Response("Not Found", { status: 404 });
     },
   });
   logger.info("HTTP server started", { port: options.port });
-  return server;
+  return httpServer;
 }

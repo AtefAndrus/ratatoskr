@@ -19,6 +19,7 @@ import { ReceiverRepository } from "./db/repositories/receivers";
 import { RouteRepository } from "./db/repositories/routes";
 import { TargetRepository } from "./db/repositories/targets";
 import { createAdminRouter } from "./http/adminEndpoints";
+import { createChildProcessAdminReader } from "./http/adminReadRunner";
 import { startHttpServer } from "./http/server";
 import { runRetentionLoop } from "./maintenance/retention";
 import { DeliveryService } from "./services/deliveryService";
@@ -97,15 +98,7 @@ async function bootstrap(): Promise<void> {
     receiverStatuses: () => supervisor.statuses(),
     adminRouter: createAdminRouter({
       adminApiSecret: config.adminApiSecret,
-      receivers,
-      targets,
-      routes,
-      notifications,
-      deliveries,
-      backlog,
-      observations,
-      exchanges,
-      maintenance,
+      read: createChildProcessAdminReader(),
       receiverStatuses: () => supervisor.statuses(),
     }),
   });

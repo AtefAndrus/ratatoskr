@@ -2,12 +2,24 @@ import { describe, expect, test } from "bun:test";
 
 import { canonicalizeQuery } from "../src/http/adminAuth";
 import { createAdminRouter } from "../src/http/adminEndpoints";
+import {
+  executeAdminRead,
+  type AdminReadRepositories,
+  type AdminReadRequest,
+} from "../src/http/adminReads";
 import { hmacSha256Hex } from "../src/http/hmac";
 import { xSnowflakeTimestampMs } from "../src/services/deliveryService";
 import { clearRecentLogs, logger } from "../src/utils/logger";
 import { addReceiver, addTarget, createTestContext, recentPostId } from "./helpers/database";
 
 const SECRET = "test-admin-secret";
+
+function inProcessReader(repositories: AdminReadRepositories) {
+  return async (request: AdminReadRequest) => ({
+    ...executeAdminRead(repositories, request),
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 async function signedRequest(url: string, method = "GET", secret = SECRET): Promise<Request> {
   const parsed = new URL(url);
@@ -21,6 +33,70 @@ async function signedRequest(url: string, method = "GET", secret = SECRET): Prom
 }
 
 describe("admin endpoints", () => {
+  test.each([500, 503, 504])(
+    "DB 読み取りのエラー %s を全エンドポイントでそのまま返す",
+    async (status) => {
+      const body = ' { "error": "reader failed" }\n';
+      const router = createAdminRouter({
+        adminApiSecret: SECRET,
+        read: async () => ({
+          status,
+          body: new TextEncoder().encode(body),
+          headers: { "Content-Type": "application/json", "Retry-After": "5" },
+        }),
+        receiverStatuses: () => {
+          throw new Error("Failed DB reads must not request runtime status");
+        },
+      });
+      for (const path of [
+        "metrics",
+        "backlog",
+        "receivers",
+        "targets",
+        "notifications",
+        "deliveries",
+        "observations",
+        "observations/1",
+        "posts/1",
+        "exchanges",
+      ]) {
+        const response = await router(await signedRequest(`http://localhost:3000/admin/${path}`));
+        expect(response.status).toBe(status);
+        expect(response.headers.get("Retry-After")).toBe("5");
+        expect(await response.text()).toBe(body);
+      }
+    },
+  );
+
+  test("DB の JSON 本文を再整形せずに返す", async () => {
+    const body = ' { "targets": ["日本語"], "routes": [] }\n';
+    const router = createAdminRouter({
+      adminApiSecret: SECRET,
+      read: async () => ({ status: 200, body: new TextEncoder().encode(body), headers: {} }),
+      receiverStatuses: () => [],
+    });
+    const response = await router(await signedRequest("http://localhost:3000/admin/targets"));
+    expect(await response.text()).toBe(body);
+  });
+
+  test.each(["/admin/metrics", "/admin/receivers"])(
+    "%s は子プロセスの本文が JSON として読めなければ JSON の 500 を返す",
+    async (path) => {
+      const router = createAdminRouter({
+        adminApiSecret: SECRET,
+        read: async () => ({
+          status: 200,
+          body: new TextEncoder().encode("not json"),
+          headers: {},
+        }),
+        receiverStatuses: () => [],
+      });
+      const response = await router(await signedRequest(`http://localhost:3000${path}`));
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Invalid admin database reader response" });
+    },
+  );
+
   test("認証と読み取り専用の制約を守る", async () => {
     const context = createTestContext();
     try {
@@ -57,7 +133,7 @@ describe("admin endpoints", () => {
       context.db.query("UPDATE delivery_queue SET state = 'failed' WHERE post_id = '3'").run();
       const router = createAdminRouter({
         adminApiSecret: SECRET,
-        ...context,
+        read: inProcessReader(context),
         receiverStatuses: () => [],
       });
       const base = "http://localhost:3000";
@@ -203,7 +279,7 @@ describe("admin endpoints", () => {
       });
       const router = createAdminRouter({
         adminApiSecret: SECRET,
-        ...context,
+        read: inProcessReader(context),
         receiverStatuses: () => [],
       });
       const base = "http://localhost:3000";
@@ -342,7 +418,7 @@ describe("admin endpoints", () => {
         .run();
       const router = createAdminRouter({
         adminApiSecret: SECRET,
-        ...context,
+        read: inProcessReader(context),
         receiverStatuses: () => [],
       });
 
@@ -502,7 +578,7 @@ describe("admin endpoints", () => {
       }
       const router = createAdminRouter({
         adminApiSecret: SECRET,
-        ...context,
+        read: inProcessReader(context),
         receiverStatuses: () => [],
       });
 
@@ -543,7 +619,7 @@ describe("admin endpoints", () => {
     try {
       const router = createAdminRouter({
         adminApiSecret: undefined,
-        ...context,
+        read: inProcessReader(context),
         receiverStatuses: () => [],
       });
       expect(

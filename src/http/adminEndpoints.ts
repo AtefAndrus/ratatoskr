@@ -1,17 +1,9 @@
-import type { BacklogRepository } from "../db/repositories/backlog";
-import type { DeliveryRepository, DeliveryStatus } from "../db/repositories/deliveries";
-import type { ExchangeRepository } from "../db/repositories/exchanges";
-import type { InternalGraphqlRepository } from "../db/repositories/internalGraphql";
-import type { MaintenanceRepository } from "../db/repositories/maintenance";
-import type { NotificationRepository } from "../db/repositories/notifications";
-import type { ReceiverRepository } from "../db/repositories/receivers";
-import type { RouteRepository } from "../db/repositories/routes";
-import type { TargetRepository } from "../db/repositories/targets";
-import { xSnowflakeTimestampMs } from "../services/deliveryService";
+import type { DeliveryStatus } from "../db/repositories/deliveries";
 import type { ReceiverStatus } from "../services/receiverSupervisor";
 import { getRecentLogs, type LogLevel } from "../utils/logger";
 import { metrics } from "../utils/metrics";
 import { verifyAdminRequest } from "./adminAuth";
+import type { AdminReadRequest, AdminReadResponse } from "./adminReads";
 
 const VALID_LEVELS: ReadonlySet<string> = new Set(["debug", "info", "warn", "error"]);
 const VALID_STATUSES: ReadonlySet<string> = new Set(["sent", "failed", "skipped_duplicate"]);
@@ -21,15 +13,7 @@ const MAX_LOG_LINES = 5_000;
 
 export interface AdminEndpointDependencies {
   adminApiSecret: string | undefined;
-  receivers: ReceiverRepository;
-  targets: TargetRepository;
-  routes: RouteRepository;
-  notifications: NotificationRepository;
-  deliveries: DeliveryRepository;
-  backlog: BacklogRepository;
-  observations: InternalGraphqlRepository;
-  exchanges: ExchangeRepository;
-  maintenance: MaintenanceRepository;
+  read: (request: AdminReadRequest) => Promise<AdminReadResponse>;
   receiverStatuses: () => ReceiverStatus[];
 }
 
@@ -69,23 +53,31 @@ function readId(url: URL, prefix: string): number | null {
 export function createAdminRouter(
   deps: AdminEndpointDependencies,
 ): (req: Request) => Promise<Response> {
+  const read = async (request: AdminReadRequest): Promise<Response> => {
+    const result = await deps.read(request);
+    const response = new Response(result.body, { status: result.status, headers: result.headers });
+    if (result.status < 200 || result.status >= 300) return response;
+    if (request.op !== "metrics" && request.op !== "receivers") return response;
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return jsonError(500, "Invalid admin database reader response");
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body))
+      return jsonError(500, "Invalid admin database reader response");
+    if (request.op === "metrics")
+      return json({ ...metrics.snapshot(), receivers: deps.receiverStatuses(), ...body });
+    return json({ ...body, status: deps.receiverStatuses() });
+  };
   const handlers: Array<{ match: (pathname: string) => boolean; handle: Handler }> = [
     {
       match: (pathname) => pathname === "/admin/metrics",
-      handle: () =>
-        json({
-          ...metrics.snapshot(),
-          receivers: deps.receiverStatuses(),
-          tables: deps.maintenance.tableCounts(),
-          backlog: {
-            queue: deps.deliveries.queueCounts(),
-            progress: deps.backlog.list(),
-          },
-        }),
+      handle: () => read({ op: "metrics" }),
     },
     {
       match: (pathname) => pathname === "/admin/backlog",
-      handle: () => json({ queue: deps.deliveries.queueCounts(), progress: deps.backlog.list() }),
+      handle: () => read({ op: "backlog" }),
     },
     {
       match: (pathname) => pathname === "/admin/logs",
@@ -120,12 +112,11 @@ export function createAdminRouter(
     },
     {
       match: (pathname) => pathname === "/admin/receivers",
-      handle: () =>
-        json({ receivers: deps.receivers.listSummaries(), status: deps.receiverStatuses() }),
+      handle: () => read({ op: "receivers" }),
     },
     {
       match: (pathname) => pathname === "/admin/targets",
-      handle: () => json({ targets: deps.targets.listAll(), routes: deps.routes.listAll() }),
+      handle: () => read({ op: "targets" }),
     },
     {
       match: (pathname) => pathname === "/admin/notifications",
@@ -133,7 +124,7 @@ export function createAdminRouter(
         const limit = readLimit(url);
         if (limit instanceof Response) return limit;
         const kind = url.searchParams.get("kind") ?? undefined;
-        return json({ notifications: deps.notifications.listRecent(limit, kind) });
+        return read({ op: "notifications", limit, kind });
       },
     },
     {
@@ -143,11 +134,10 @@ export function createAdminRouter(
         if (limit instanceof Response) return limit;
         const status = url.searchParams.get("status");
         if (status !== null && !VALID_STATUSES.has(status)) return jsonError(400, "Invalid status");
-        return json({
-          deliveries: deps.deliveries.listRecent(
-            limit,
-            (status as DeliveryStatus | null) ?? undefined,
-          ),
+        return read({
+          op: "deliveries",
+          limit,
+          status: (status as DeliveryStatus | null) ?? undefined,
         });
       },
     },
@@ -156,11 +146,11 @@ export function createAdminRouter(
       handle: (url) => {
         const limit = readLimit(url);
         if (limit instanceof Response) return limit;
-        return json({
-          observations: deps.observations.listRecent(limit, {
-            targetHandle: url.searchParams.get("target") ?? undefined,
-            errorsOnly: url.searchParams.get("errors") === "1",
-          }),
+        return read({
+          op: "observations",
+          limit,
+          targetHandle: url.searchParams.get("target") ?? undefined,
+          errorsOnly: url.searchParams.get("errors") === "1",
         });
       },
     },
@@ -169,9 +159,7 @@ export function createAdminRouter(
       handle: (url) => {
         const id = readId(url, "/admin/observations/");
         if (id === null) return jsonError(400, "Invalid observation id");
-        const observation = deps.observations.getResponseText(id);
-        if (observation === null) return jsonError(404, "Observation not found");
-        return json({ ...observation, posts: deps.observations.listPostsForObservation(id) });
+        return read({ op: "observation", id });
       },
     },
     {
@@ -181,44 +169,7 @@ export function createAdminRouter(
         if (!/^\d+$/.test(postId)) return jsonError(400, "Invalid post id");
         const limit = readLimit(url);
         if (limit instanceof Response) return limit;
-        // リポストは通知主体側の ID で配信されるので、通知とキュー行からその ID を拾って引き直す。
-        const notifications = deps.notifications.listByPostId(postId);
-        const notifiedIds = [
-          ...new Set([postId, ...notifications.flatMap((n) => n.notificationPostId ?? [])]),
-        ];
-        let queue = deps.deliveries.listQueueByPostIds(notifiedIds);
-        const postIds = [...new Set([...notifiedIds, ...queue.map((entry) => entry.postId)])];
-        // URL で見つけたリポストの ID は、元投稿を URL に持たない行 (キュー導入時に移行した行など) にもある。
-        if (postIds.length > notifiedIds.length)
-          queue = deps.deliveries.listQueueByPostIds(postIds);
-        return json({
-          postId,
-          postIds: postIds.map((id) => {
-            const postedAt = new Date(xSnowflakeTimestampMs(id) ?? Number.NaN);
-            return {
-              postId: id,
-              postedAt: Number.isNaN(postedAt.getTime()) ? null : postedAt.toISOString(),
-            };
-          }),
-          notifications,
-          observations: deps.observations.listPostSightings(postIds, limit),
-          // 投稿先は絞らずに全件並べる。投稿の監視対象は投稿者、リポスト元、会話の文脈など複数の記録から決まり、
-          // どれかが保持期間で消えると絞り込みが調べたい投稿先を落とすため。投稿先は数十件に収まる。
-          routes: deps.routes.listAll().map((route) => ({
-            ...route,
-            queue: queue
-              .filter((entry) => entry.routeId === route.id)
-              .map((entry) => ({
-                ...entry,
-                attempts: deps.deliveries.listAttemptsForQueueEntry(
-                  entry,
-                  notifications
-                    .filter((n) => (n.notificationPostId ?? n.postId) === entry.postId)
-                    .map((n) => n.id),
-                ),
-              })),
-          })),
-        });
+        return read({ op: "posts", postId, limit });
       },
     },
     {
@@ -226,8 +177,10 @@ export function createAdminRouter(
       handle: (url) => {
         const limit = readLimit(url);
         if (limit instanceof Response) return limit;
-        return json({
-          exchanges: deps.exchanges.listRecent(limit, url.searchParams.get("source") ?? undefined),
+        return read({
+          op: "exchanges",
+          limit,
+          source: url.searchParams.get("source") ?? undefined,
         });
       },
     },
