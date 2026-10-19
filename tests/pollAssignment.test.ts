@@ -143,6 +143,19 @@ describe("認証が切れている受信アカウントがいるときの振り�
     }
   });
 
+  test("切れていない受信は、ほかの受信が切れても全員を母集団にしたときの担当を手放さない", () => {
+    // 対象 3 件を受信 4 台で分けると、担当ゼロの受信が確認用の 1 件を持つ。
+    // 1 台が切れて母集団が縮むと、その受信に別の担当が付き、確認用の 1 件が外れうる。
+    const few = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    for (const failingId of receiverIds) {
+      for (const self of receivers([failingId]).filter((receiver) => !receiver.failing)) {
+        expect(selectPollTargets(few, self, receivers([failingId]))).toEqual(
+          expect.arrayContaining(assignTargets(few, self.id, receiverIds)),
+        );
+      }
+    }
+  });
+
   test("誰も切れていなければ、全員を母集団にして振り分ける", () => {
     expect(selectPollTargets(targets, { id: 2, failing: false }, receivers([]))).toEqual(
       assignTargets(targets, 2, receiverIds),

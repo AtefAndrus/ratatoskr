@@ -35,9 +35,10 @@ export function assignTargets<T extends { id: number }>(
  * 重ねないと、その受信が担当する対象は残りの 1 台だけで追うことになり、
  * 担当の 2 台がどちらも切れた対象は内部 GraphQL で誰も取得しなくなる。
  *
- * 切れている受信自身の担当は全員を母集団にしたまま変えない。
- * 担当を減らすと、残した対象が認証と関係のない失敗を返し続けたときに回復を検知できなくなり、
- * 切れたり戻ったりするたびに外した対象の取得間隔の状態も捨てることになる。
+ * どの受信も、全員を母集団にしたときの担当は減らさない。切れている受信は重ねもしない。
+ * 減らすと、切れている受信では残した対象が認証と関係のない失敗を返し続けたときに回復を検知できず、
+ * 切れていない受信では担当ゼロの代わりに持っていた 1 件を手放す。
+ * どちらも、切れたり戻ったりするたびに外した対象の取得間隔の状態を捨てることになる。
  */
 export function selectPollTargets<T extends { id: number }>(
   targets: readonly T[],
@@ -45,10 +46,13 @@ export function selectPollTargets<T extends { id: number }>(
   /** 振り分けに使う受信アカウント。順序は問わない。 */
   receivers: readonly { id: number; failing: boolean }[],
 ): T[] {
-  const population = receivers
-    .filter((receiver) => self.failing || !receiver.failing)
-    .map((receiver) => receiver.id);
-  return assignTargets(targets, self.id, population);
+  const all = receivers.map((receiver) => receiver.id);
+  const own = assignTargets(targets, self.id, all);
+  if (self.failing) return own;
+  const healthy = receivers.filter((receiver) => !receiver.failing).map((receiver) => receiver.id);
+  const extra = new Set(assignTargets(targets, self.id, healthy));
+  const ownSet = new Set(own);
+  return targets.filter((target) => ownSet.has(target) || extra.has(target));
 }
 
 function topReceivers(targetId: number, receiverIds: readonly number[]): number[] {
