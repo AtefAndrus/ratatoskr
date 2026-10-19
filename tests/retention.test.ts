@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
 import { applyRetentionInChunks, type RawTextWatermarks } from "../src/maintenance/retention";
-import { countTablesInChunks } from "../src/maintenance/tableCounts";
 import { addReceiver, addTarget, createTestContext, type TestContext } from "./helpers/database";
 
 describe("保持期間の整理の分割", () => {
@@ -225,7 +224,7 @@ describe("保持期間の整理の分割", () => {
       expect(result.rowsDeleted).toBe(450);
       // 観測は 200 件ずつ消え、残りが上限未満になった回で次の表へ進む
       expect(deletes.slice(0, 3)).toEqual([250, 50, 0]);
-      expect(await countTablesInChunks(context.maintenance)).toMatchObject({
+      expect(context.maintenance.tableCounts()).toMatchObject({
         internal_graphql_observations: 0,
         internal_graphql_observation_posts: 0,
       });

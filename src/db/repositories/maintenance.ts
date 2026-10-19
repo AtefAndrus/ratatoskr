@@ -9,7 +9,7 @@ export interface TableCounts {
   [table: string]: number;
 }
 
-export const COUNTED_TABLES = [
+const COUNTED_TABLES = [
   "receivers",
   "watch_targets",
   "routes",
@@ -157,17 +157,14 @@ export class MaintenanceRepository {
       .all({ before, limit }).length;
   }
 
-  /** rowid が `after` より大きい行を、rowid の順に最大 `limit` 行だけ数える。 */
-  countRowsAfter(
-    table: (typeof COUNTED_TABLES)[number],
-    after: number,
-    limit: number,
-  ): { count: number; last: number | null } {
-    return this.db
-      .query(
-        `SELECT count(*) AS count, max(rowid) AS last
-         FROM (SELECT rowid FROM ${table} WHERE rowid > $after ORDER BY rowid LIMIT $limit)`,
-      )
-      .get({ after, limit }) as { count: number; last: number | null };
+  tableCounts(): TableCounts {
+    const counts: TableCounts = {};
+    for (const table of COUNTED_TABLES) {
+      const row = this.db.query(`SELECT count(*) AS count FROM ${table}`).get() as {
+        count: number;
+      };
+      counts[table] = row.count;
+    }
+    return counts;
   }
 }
