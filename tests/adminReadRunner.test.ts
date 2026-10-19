@@ -137,6 +137,30 @@ describe("child process admin reader", () => {
     expect((await read({ op: "targets" })).status).toBe(200);
   });
 
+  test("状態行の前に出力があると 500 を返し、出力の先頭と stderr をログに残す", async () => {
+    const log = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const read = createChildProcessAdminReader({
+        command: [
+          process.execPath,
+          "-e",
+          'await Bun.stdin.text(); console.log("garbage\\n200\\n{}"); console.error("why")',
+        ],
+      });
+      const result = await read({ op: "targets" });
+      expect(result.status).toBe(500);
+      expect(await new Response(result.body).json()).toEqual({
+        error: "Admin database read failed",
+      });
+      expect(log).toHaveBeenCalledWith("Admin database reader returned an invalid response", {
+        stdoutHead: "garbage\n200\n{}\n",
+        stderr: "why\n",
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   test("子プロセスの異常終了は 500 と stderr の末尾 2 KB を記録する", async () => {
     const log = spyOn(logger, "error").mockImplementation(() => {});
     try {

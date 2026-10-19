@@ -79,6 +79,24 @@ describe("admin endpoints", () => {
     expect(await response.text()).toBe(body);
   });
 
+  test.each(["/admin/metrics", "/admin/receivers"])(
+    "%s は子プロセスの本文が JSON として読めなければ JSON の 500 を返す",
+    async (path) => {
+      const router = createAdminRouter({
+        adminApiSecret: SECRET,
+        read: async () => ({
+          status: 200,
+          body: new TextEncoder().encode("not json"),
+          headers: {},
+        }),
+        receiverStatuses: () => [],
+      });
+      const response = await router(await signedRequest(`http://localhost:3000${path}`));
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "Invalid admin database reader response" });
+    },
+  );
+
   test("認証と読み取り専用の制約を守る", async () => {
     const context = createTestContext();
     try {

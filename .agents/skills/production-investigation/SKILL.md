@@ -25,7 +25,7 @@ Discord への投稿、`/watch` での設定変更、`bun run cli` の `receiver
 `bun run` は実行するコマンドを標準エラーに 1 行出すので、`jq` には標準出力だけを渡す。
 `/admin/logs` だけは JSON ではなくテキストを返す。
 DB を読むエンドポイント (`/admin/logs` 以外) は同時に 1 件しか実行されず、実行中に叩いた分は `HTTP 503` で失敗するので、並行して叩かず 1 件ずつ順に叩く。
-`503` が返ったら 5 秒待って叩き直す。
+`503` の間は 5 秒おきに叩き直す。先に動いている読み取りは最長 20 秒で終わる。
 
 宛先は、空でない環境変数 `ADMIN_BASE_URL`、`.env.local`、`.env` の順に最初に見つかった値で、どれにも無ければ `http://localhost:3000` になる (`src/config/index.ts` の `loadEnvFile`、`src/http/adminClient.ts`)。
 CLI と同じ読み込みで host だけを出し、報告に書く。
