@@ -21,5 +21,9 @@ pre-commit:
       run: bun run lint:md
     04_typecheck:
       run: bun run typecheck
+    # git はフックに GIT_INDEX_FILE を、linked worktree では絶対パスの GIT_DIR も渡す。
+    # 残すと、テストが起動する git が -C の先ではなく作業中のリポジトリを書き換えるので、外してから動かす。
     05_test:
-      run: bun test
+      run: |
+        for name in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$name"; done
+        bun test
