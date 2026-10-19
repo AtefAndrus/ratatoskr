@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { applyMigrations, SCHEMA_VERSION } from "../src/db/schema";
 import { applyRetentionInChunks, type RawTextWatermarks } from "../src/maintenance/retention";
+import { countTablesInChunks } from "../src/maintenance/tableCounts";
 import { addReceiver, addTarget, createTestContext } from "./helpers/database";
 
 describe("receivers", () => {
@@ -257,7 +258,7 @@ describe("observations と保持期間", () => {
       expect(context.observations.getResponseText(2)?.responseText ?? null).toBeNull();
       // 連鎖削除された投稿は数えず、消した観測の件数だけを数える
       expect(deleted.rowsDeleted).toBe(2);
-      expect(context.maintenance.tableCounts()).toMatchObject({
+      expect(await countTablesInChunks(context.maintenance)).toMatchObject({
         internal_graphql_observations: 1,
         internal_graphql_observation_posts: 1,
       });
