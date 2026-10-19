@@ -13,10 +13,17 @@ async function localGitOptions(): Promise<string[]> {
   return match[1].split(" ");
 }
 
+/**
+ * git のフックから動かすと GIT_DIR や GIT_INDEX_FILE が継承され、`-C` を無視して
+ * 作業中のリポジトリに init、commit、config を書き込むので、GIT_* をすべて外す。
+ */
 function git(cwd: string, args: string[]): number {
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+  );
   return Bun.spawnSync(["git", "-C", cwd, ...args], {
     env: {
-      ...process.env,
+      ...inherited,
       GIT_AUTHOR_NAME: "t",
       GIT_AUTHOR_EMAIL: "t@example.com",
       GIT_COMMITTER_NAME: "t",
