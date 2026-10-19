@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.8.4] - 2026-10-19
+
+
+### Fixed
+
+- 観測済みの判定を投稿 ID の索引から引く (#76)
+
+
 ## [0.8.3] - 2026-10-19
 
 
@@ -250,6 +258,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.8.4]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.0...v0.8.1
