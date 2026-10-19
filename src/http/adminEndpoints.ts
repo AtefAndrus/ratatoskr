@@ -7,7 +7,6 @@ import type { NotificationRepository } from "../db/repositories/notifications";
 import type { ReceiverRepository } from "../db/repositories/receivers";
 import type { RouteRepository } from "../db/repositories/routes";
 import type { TargetRepository } from "../db/repositories/targets";
-import { countTablesInChunks } from "../maintenance/tableCounts";
 import { xSnowflakeTimestampMs } from "../services/deliveryService";
 import type { ReceiverStatus } from "../services/receiverSupervisor";
 import { getRecentLogs, type LogLevel } from "../utils/logger";
@@ -73,11 +72,11 @@ export function createAdminRouter(
   const handlers: Array<{ match: (pathname: string) => boolean; handle: Handler }> = [
     {
       match: (pathname) => pathname === "/admin/metrics",
-      handle: async () =>
+      handle: () =>
         json({
           ...metrics.snapshot(),
           receivers: deps.receiverStatuses(),
-          tables: await countTablesInChunks(deps.maintenance),
+          tables: deps.maintenance.tableCounts(),
           backlog: {
             queue: deps.deliveries.queueCounts(),
             progress: deps.backlog.list(),
