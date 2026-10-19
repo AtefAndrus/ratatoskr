@@ -133,4 +133,43 @@ describe("観測済みの判定", () => {
       context.db.close();
     }
   });
+
+  test("組の観測からたどるのは、直近の観測が上限に届いて組を含まないときだけ", () => {
+    const context = createTestContext();
+    try {
+      const mine = addReceiver(context, "mine");
+      const other = addReceiver(context, "other");
+      const target = addTarget(context, { handle: "example" });
+      for (let index = 0; index < RECENT_SIGHTING_LIMIT; index += 1) {
+        observe(context, other, target, "many");
+      }
+      for (let index = 0; index < RECENT_SIGHTING_LIMIT - 1; index += 1) {
+        observe(context, other, target, "few");
+      }
+      const fallbacks = countPairLookups(context);
+      observe(context, mine, target, "unseen");
+      observe(context, mine, target, "few");
+      observe(context, mine, target, "few");
+      expect(fallbacks.count).toBe(0);
+      observe(context, mine, target, "many");
+      expect(fallbacks.count).toBe(1);
+      // 一度見た後は自分の観測が直近に入るので、もう切り替えない
+      observe(context, mine, target, "many");
+      expect(fallbacks.count).toBe(1);
+    } finally {
+      context.db.close();
+    }
+  });
 });
+
+/** 組の観測からたどるクエリの実行回数を数える。bun:sqlite は同じ SQL の文を使い回すので、その文の get を包む。 */
+function countPairLookups(context: TestContext): { count: number } {
+  const counter = { count: 0 };
+  const statement = context.db.query(HAS_SEEN_BY_PAIR_SQL);
+  const get = statement.get.bind(statement);
+  statement.get = (...args: Parameters<typeof get>) => {
+    counter.count += 1;
+    return get(...args);
+  };
+  return counter;
+}
