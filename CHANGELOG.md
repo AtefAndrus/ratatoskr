@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.8.7] - 2026-10-19
+
+
+### Fixed
+
+- 管理 API の DB 読み取りを読み取り専用の子プロセスで動かす (#79)
+
+
 ## [0.8.6] - 2026-10-19
 
 
@@ -274,6 +282,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.8.7]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.3...v0.8.4
