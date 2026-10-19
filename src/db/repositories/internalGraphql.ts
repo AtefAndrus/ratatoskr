@@ -1,5 +1,23 @@
 import type { Database } from "bun:sqlite";
 
+/**
+ * 受信アカウントと監視対象の組で、その投稿を前に観測したか。
+ * 組の観測からたどる計画にしないのは、本番では 1 組に観測が 1 万件以上あり、
+ * 初めて見る投稿や新しい投稿ではその全件を、取得 1 回につき投稿の数だけたどるためである。
+ * 投稿 ID の索引から引き、自分の直近の観測が先に当たるよう新しい順にたどる。
+ * 古い順にしないのは、ほかの受信アカウントが長く見てきた投稿を後から担当した受信アカウントが、毎回その全件をたどるため。
+ * いまの SQLite は ORDER BY だけでも投稿 ID の索引を先に引くが、統計が入って計画が変わっても順を保つよう CROSS JOIN でも固定する。
+ */
+export const HAS_SEEN_POST_SQL = `SELECT 1
+  FROM internal_graphql_observation_posts AS posts
+  CROSS JOIN internal_graphql_observations AS observations
+    ON observations.id = posts.observation_id
+  WHERE observations.receiver_id = $receiverId
+    AND observations.target_id = $targetId
+    AND posts.post_id = $postId
+  ORDER BY posts.observation_id DESC
+  LIMIT 1`;
+
 export interface NewObservation {
   receiverId: number;
   targetId: number;
@@ -114,15 +132,7 @@ export class InternalGraphqlRepository {
     // 初出判定は受信アカウントと監視対象の組ごとに行う。
     // 受信アカウントを追加した直後に過去投稿を「新規」と誤判定しても、
     // 配信側の起動時刻境界と経路単位の重複排除で Discord には送られない。
-    const hasSeenPost = this.db.query(
-      `SELECT 1
-       FROM internal_graphql_observation_posts AS posts
-       JOIN internal_graphql_observations AS observations ON observations.id = posts.observation_id
-       WHERE observations.receiver_id = $receiverId
-         AND observations.target_id = $targetId
-         AND posts.post_id = $postId
-       LIMIT 1`,
-    );
+    const hasSeenPost = this.db.query(HAS_SEEN_POST_SQL);
     const insertPost = this.db.query(
       `INSERT INTO internal_graphql_observation_posts (
          observation_id, post_id, created_at, author_user_id, author_handle,
