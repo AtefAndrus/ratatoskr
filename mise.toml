@@ -1,5 +1,5 @@
 [tools]
-bun = "1.4.2"
+bun = "1.4.3"
 "aqua:orhun/git-cliff" = "2.14.2"
 # scripts/wait-for-deploy.sh とそのテストが使う
 "aqua:jqlang/jq" = "1.8.2"
