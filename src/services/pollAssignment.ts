@@ -26,15 +26,18 @@ export function assignTargets<T extends { id: number }>(
   const assigned = targets.filter((target) =>
     topReceivers(target.id, receiverIds).includes(receiverId),
   );
-  if (assigned.length > 0) return assigned;
-  return probeTarget(targets, receiverId);
+  if (assigned.length > 0 || targets.length === 0) return assigned;
+  return [targets[mix(receiverId) % targets.length]!];
 }
 
 /**
- * 認証が切れている受信を母集団から外してから振り分ける。
- * 外さないと、その受信が担当する対象は残りの 1 台だけで追うことになり、
+ * 認証が切れている受信の担当を、残りの受信にも重ねて持たせる。
+ * 重ねないと、その受信が担当する対象は残りの 1 台だけで追うことになり、
  * 担当の 2 台がどちらも切れた対象は内部 GraphQL で誰も取得しなくなる。
- * 外した受信にも 1 件は取得させる。取得を止めると回復を検知できず、分担に戻れない。
+ *
+ * 切れている受信自身の担当は全員を母集団にしたまま変えない。
+ * 担当を減らすと、残した対象が認証と関係のない失敗を返し続けたときに回復を検知できなくなり、
+ * 切れたり戻ったりするたびに外した対象の取得間隔の状態も捨てることになる。
  */
 export function selectPollTargets<T extends { id: number }>(
   targets: readonly T[],
@@ -42,14 +45,10 @@ export function selectPollTargets<T extends { id: number }>(
   /** 振り分けに使う受信アカウント。順序は問わない。 */
   receivers: readonly { id: number; failing: boolean }[],
 ): T[] {
-  if (self.failing) return probeTarget(targets, self.id);
-  const healthy = receivers.filter((receiver) => !receiver.failing).map((receiver) => receiver.id);
-  return assignTargets(targets, self.id, healthy);
-}
-
-function probeTarget<T extends { id: number }>(targets: readonly T[], receiverId: number): T[] {
-  if (targets.length === 0) return [];
-  return [targets[mix(receiverId) % targets.length]!];
+  const population = receivers
+    .filter((receiver) => self.failing || !receiver.failing)
+    .map((receiver) => receiver.id);
+  return assignTargets(targets, self.id, population);
 }
 
 function topReceivers(targetId: number, receiverIds: readonly number[]): number[] {
