@@ -23,6 +23,12 @@ X 側の仕様変更を調査するために、保存した生データをその
 `limit` は 1 から 1000 で既定は 50 である。
 GET 以外は `405` を返す。
 
+DB を読む要求は同時に 1 件だけ実行する。
+実行中の追加要求は待機せず、`503` と `Retry-After: 5` を返すため、5 秒後に再試行する。
+DB 読み取り用の子プロセスが起動から終了と出力の読み取り完了までに 20 秒の期限を超えると、子プロセスを強制終了して `504` を返す。
+いずれも本文は `{"error":"..."}` 形式である。
+`/admin/logs` は DB を読まないため、この同時実行制限の対象にならない。
+
 `source` の値は `x_push_registration`、`x_target_notifications`、`x_tweet_lookup` (Web Push で通常投稿と引用を区別するための投稿 1 件の取得)、`x_internal_api_document`、`x_transaction_pairs` である。
 
 ## 認証
