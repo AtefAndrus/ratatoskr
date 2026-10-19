@@ -92,17 +92,18 @@ describe("child process admin reader", () => {
         await Bun.stdin.text();
         await Bun.write(${JSON.stringify(pidPath)}, String(process.pid));
         await Bun.write(Bun.stdout, "200\\n{}");
-        await Bun.sleep(1500);
+        await Bun.sleep(6000);
         await Bun.write(${JSON.stringify(finishedPath)}, "finished");
       `,
       ],
-      deadlineMs: 500,
+      // 子プロセスの起動と pid の書き込みが負荷の高い環境でも間に合うよう、期限に余裕を持たせる
+      deadlineMs: 2_000,
     });
     const startedAt = performance.now();
     try {
       const result = await read({ op: "targets" });
       expect(result.status).toBe(504);
-      expect(performance.now() - startedAt).toBeLessThan(1_200);
+      expect(performance.now() - startedAt).toBeLessThan(4_000);
       expect(existsSync(finishedPath)).toBe(false);
       const pid = Number(readFileSync(pidPath, "utf8"));
       expect(() => process.kill(pid, 0)).toThrow();

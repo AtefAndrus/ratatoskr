@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import { logger } from "../utils/logger";
 import type { AdminReadRequest, AdminReadResponse } from "./adminReads";
 
@@ -38,7 +40,7 @@ export function createChildProcessAdminReader(
   const command = options.command ?? [
     process.execPath,
     "run",
-    new URL("../admin/readCommand.ts", import.meta.url).pathname,
+    fileURLToPath(new URL("../admin/readCommand.ts", import.meta.url)),
   ];
   const deadlineMs = options.deadlineMs ?? 20_000;
 
@@ -86,8 +88,14 @@ export function createChildProcessAdminReader(
       }
       const separator = stdout.indexOf(10);
       const statusText = new TextDecoder().decode(stdout.subarray(0, separator));
-      if (separator < 0 || !/^[2-5]\d\d$/.test(statusText))
-        throw new Error("Invalid admin database reader response");
+      if (separator < 0 || !/^[2-5]\d\d$/.test(statusText)) {
+        // 状態行の前に何かが出力された原因を追えるよう、出力の先頭と stderr の末尾を残す。
+        logger.error("Admin database reader returned an invalid response", {
+          stdoutHead: new TextDecoder().decode(stdout.subarray(0, 512)),
+          stderr,
+        });
+        return errorResponse(500, "Admin database read failed");
+      }
       return {
         status: Number(statusText),
         body: stdout.subarray(separator + 1),

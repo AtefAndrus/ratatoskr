@@ -58,7 +58,12 @@ export function createAdminRouter(
     const response = new Response(result.body, { status: result.status, headers: result.headers });
     if (result.status < 200 || result.status >= 300) return response;
     if (request.op !== "metrics" && request.op !== "receivers") return response;
-    const body: unknown = await response.json();
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return jsonError(500, "Invalid admin database reader response");
+    }
     if (typeof body !== "object" || body === null || Array.isArray(body))
       return jsonError(500, "Invalid admin database reader response");
     if (request.op === "metrics")
