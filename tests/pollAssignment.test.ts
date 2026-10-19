@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { assignTargets, POLL_REDUNDANCY } from "../src/services/pollAssignment";
+import { assignTargets, POLL_REDUNDANCY, selectPollTargets } from "../src/services/pollAssignment";
 
 const targets = Array.from({ length: 40 }, (_, index) => ({ id: index + 1 }));
 
@@ -102,5 +102,63 @@ describe("監視対象の受信アカウントへの振り分け", () => {
 
   test("対象が無ければ空を返す", () => {
     expect(assignTargets([], 1, [1, 2, 3])).toEqual([]);
+  });
+});
+
+const receiverIds = [1, 2, 3, 4];
+
+function receivers(failingIds: readonly number[]): Array<{ id: number; failing: boolean }> {
+  return receiverIds.map((id) => ({ id, failing: failingIds.includes(id) }));
+}
+
+function healthyCovering(targetId: number, failingIds: readonly number[]): number[] {
+  return receivers(failingIds)
+    .filter((self) => !self.failing)
+    .filter((self) =>
+      selectPollTargets(targets, self, receivers(failingIds)).some(
+        (target) => target.id === targetId,
+      ),
+    )
+    .map((self) => self.id);
+}
+
+describe("認証が切れている受信アカウントがいるときの振り分け", () => {
+  test("切れた 1 台の担当も、残りの受信のうち 2 台が追う", () => {
+    for (const target of targets) {
+      expect(healthyCovering(target.id, [4])).toHaveLength(POLL_REDUNDANCY);
+    }
+  });
+
+  test("切れていない受信が 1 台だけなら、その 1 台が全対象を追う", () => {
+    expect(
+      selectPollTargets(targets, { id: 1, failing: false }, receivers([2, 3, 4])),
+    ).toHaveLength(targets.length);
+  });
+
+  test("切れた受信自身の担当は、全員を母集団にしたときと変わらない", () => {
+    for (const failingIds of [[4], [1, 2, 3, 4]]) {
+      expect(selectPollTargets(targets, { id: 4, failing: true }, receivers(failingIds))).toEqual(
+        assignTargets(targets, 4, receiverIds),
+      );
+    }
+  });
+
+  test("切れていない受信は、ほかの受信が切れても全員を母集団にしたときの担当を手放さない", () => {
+    // 対象 3 件を受信 4 台で分けると、担当ゼロの受信が確認用の 1 件を持つ。
+    // 1 台が切れて母集団が縮むと、その受信に別の担当が付き、確認用の 1 件が外れうる。
+    const few = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    for (const failingId of receiverIds) {
+      for (const self of receivers([failingId]).filter((receiver) => !receiver.failing)) {
+        expect(selectPollTargets(few, self, receivers([failingId]))).toEqual(
+          expect.arrayContaining(assignTargets(few, self.id, receiverIds)),
+        );
+      }
+    }
+  });
+
+  test("誰も切れていなければ、全員を母集団にして振り分ける", () => {
+    expect(selectPollTargets(targets, { id: 2, failing: false }, receivers([]))).toEqual(
+      assignTargets(targets, 2, receiverIds),
+    );
   });
 });
