@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.8.8] - 2026-10-22
+
+
+### Fixed
+
+- Bun 1.4.4 で鍵が漏えいした eMudhra の CA の証明書を拒否する (#81)
+
+
+### Testing
+
+- フックから動くテストに GIT_* を渡さず、行数の実行計画を確かめる (#80)
+
+
 ## [0.8.7] - 2026-10-19
 
 
@@ -282,6 +295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.8.8]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.4...v0.8.5
