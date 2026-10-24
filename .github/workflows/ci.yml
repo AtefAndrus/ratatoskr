@@ -34,9 +34,9 @@ jobs:
           if [ "$mise_v" != "$docker_v" ] || [ "$mise_v" != "$types_v" ]; then
             echo "::error::bun version drift (mise=$mise_v dockerfile=$docker_v bun-types=$types_v)"; exit 1
           fi
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
-          version: "2026.10.3"
+          version: "2026.10.17"
           install_args: bun
       - run: bun install --frozen-lockfile
       - run: bun run format:check
