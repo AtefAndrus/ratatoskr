@@ -20,6 +20,8 @@ export interface InternalTimelinePost {
   createdAt: string | null;
   authorUserId: string | null;
   authorHandle: string | null;
+  /** 投稿者の表示名。リポストではリポストした側のもの。 */
+  authorDisplayName: string | null;
   types: InternalPostType[];
   referencedPostIds: string[];
   /** リポストのとき、元投稿の投稿者ハンドル。URL を通常投稿と同じ形にするために使う。 */
@@ -409,6 +411,7 @@ export function classifyTweetResult(raw: unknown): InternalTimelinePost | null {
     authorUserId: typeof legacy.user_id_str === "string" ? legacy.user_id_str : null,
     authorHandle:
       readFirstString(userCore?.screen_name, userLegacy?.screen_name)?.toLowerCase() ?? null,
+    authorDisplayName: readFirstString(userCore?.name, userLegacy?.name),
     types,
     referencedPostIds: [
       ...new Set(referencedPostIds.filter((value): value is string => typeof value === "string")),

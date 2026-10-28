@@ -78,6 +78,8 @@ describe("X 内部 GraphQL", () => {
       { id: "4", types: ["repost"], references: ["40"] },
     ]);
     expect(posts.every((post) => post.authorHandle === "example")).toBe(true);
+    // リポストでも元投稿の投稿者ではなく、リポストした側の表示名を読む。
+    expect(posts.every((post) => post.authorDisplayName === "例の表示名")).toBe(true);
     expect(posts.map((post) => post.referencedAuthorHandle)).toEqual([
       null,
       null,
@@ -425,7 +427,11 @@ function tweet(
       result: {
         __typename: "Tweet",
         rest_id: id,
-        core: { user_results: { result: { rest_id: "99", core: { screen_name: "Example" } } } },
+        core: {
+          user_results: {
+            result: { rest_id: "99", core: { screen_name: "Example", name: "例の表示名" } },
+          },
+        },
         legacy: { created_at: "Thu Sep 03 00:00:00 +0000 2026", user_id_str: "99", ...legacy },
         ...extra,
       },
