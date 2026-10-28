@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { generateClientTransactionId, parseTransactionPairs } from "../src/x/clientTransactionId";
 import {
+  classifyTweetResult,
   extractTimelinePosts,
   extractTimelinePage,
   InternalGraphqlConfigurationProvider,
@@ -41,7 +42,9 @@ describe("X 内部 GraphQL", () => {
                                 rest_id: "40",
                                 core: {
                                   user_results: {
-                                    result: { core: { screen_name: "Origin_User" } },
+                                    result: {
+                                      core: { screen_name: "Origin_User", name: "元投稿の作者" },
+                                    },
                                   },
                                 },
                               },
@@ -87,6 +90,17 @@ describe("X 内部 GraphQL", () => {
       "origin_user",
     ]);
     expect(posts.every((post) => post.createdAt === "2026-09-03T00:00:00.000Z")).toBe(true);
+  });
+
+  test("投稿者の表示名は core.name を優先し、無ければ legacy.name を読む", () => {
+    expect(
+      classifyTweetResult(tweetByUser({ core: { name: "新" }, legacy: { name: "旧" } }))
+        ?.authorDisplayName,
+    ).toBe("新");
+    expect(classifyTweetResult(tweetByUser({ legacy: { name: "旧" } }))?.authorDisplayName).toBe(
+      "旧",
+    );
+    expect(classifyTweetResult(tweetByUser({}))?.authorDisplayName).toBeNull();
   });
 
   test("Bottomカーソルを抽出し、固定投稿を重なり判定と投稿枠から外す", () => {
@@ -415,6 +429,14 @@ function timelinePage(instructions: object[]): ReturnType<typeof extractTimeline
 
 function entry(entryId: string, itemContent: object): object {
   return { entryId, content: { itemContent } };
+}
+
+function tweetByUser(user: object): object {
+  return {
+    rest_id: "1",
+    core: { user_results: { result: { rest_id: "99", ...user } } },
+    legacy: { created_at: "Thu Sep 03 00:00:00 +0000 2026", user_id_str: "99" },
+  };
 }
 
 function tweet(
