@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const TIMESTAMP_DEFAULT = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -314,6 +314,16 @@ const MIGRATIONS: ReadonlyArray<(database: Database) => void> = [
         CHECK (media_filter IN ('all', 'photo'));
 
       ALTER TABLE internal_graphql_observation_posts ADD COLUMN media_types_json TEXT;
+    `);
+  },
+  (database) => {
+    // 失敗した観測は全体の 1% に満たないので、管理 API の errors=1 は索引なしでは表のほぼ全行を読む。
+    // 生応答本文の後ろの列を読むには本文の overflow ページもたどるため、本番では 20 秒の期限を超えた。
+    database.exec(`
+      CREATE INDEX internal_graphql_observations_error_idx
+        ON internal_graphql_observations(id)
+        WHERE error IS NOT NULL OR parse_error IS NOT NULL
+           OR response_status IS NULL OR response_status != 200;
     `);
   },
 ];
