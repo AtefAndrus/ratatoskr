@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.8.9] - 2026-10-29
+
+
+### Dependencies
+
+- Update all non-major dependencies (#57)
+- Update oxc toolchain (#70)
+- Update zizmor (#71)
+
+
+### Fixed
+
+- 内部 GraphQL の取得結果から監視対象の表示名を取り直す (#82)
+- 生応答本文の整理を 100 観測ずつに分け、毎時の停止を短くする (#84)
+- 失敗した観測の一覧を部分索引で引き、管理 API の時間切れをなくす (#83)
+- 配信の再試行ループを DB の例外で止めない (#85)
+
+
 ## [0.8.8] - 2026-10-22
 
 
@@ -295,6 +313,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - AGENTS.md をコードから読み取れない判断と注意点に絞る (#1)
+[0.8.9]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/AtefAndrus/ratatoskr/compare/v0.8.5...v0.8.6
