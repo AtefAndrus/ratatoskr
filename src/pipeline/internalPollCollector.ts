@@ -14,7 +14,7 @@ import { logger } from "../utils/logger";
 import { metrics } from "../utils/metrics";
 import { noteActivity } from "../utils/stallWatch";
 import { AdaptivePollScheduler, type PollCompletion } from "../x/adaptivePollScheduler";
-import type { XInternalGraphqlClient } from "../x/internalGraphql";
+import type { InternalTimelinePost, XInternalGraphqlClient } from "../x/internalGraphql";
 
 const IDLE_WAIT_MS = 30_000;
 /** 待機を刻む上限。担当替えを取り込むまでの最大の遅れになる。 */
@@ -269,6 +269,7 @@ export class InternalPollCollector {
             afterEnqueue: saveBacklogProgress,
             ...(backfillNotBefore === undefined ? {} : { notBefore: backfillNotBefore }),
           });
+    this.refreshDisplayName(target, result.posts);
     return {
       target: target.handle,
       observationId: stored.observationId,
@@ -285,6 +286,25 @@ export class InternalPollCollector {
       deliverySkipped: deliveryResult.skipped,
       deliverySuppressed: deliveryResult.suppressed,
     };
+  }
+
+  /**
+   * 表示名を /watch add のときにしか取らないと、改名後は Web Push のリポスト通知を監視対象に結べなくなる。
+   * リポストの通知は URI が元投稿を指し、監視対象を決められるのはタイトルの表示名だけであるため。
+   */
+  private refreshDisplayName(target: TargetRecord, posts: readonly InternalTimelinePost[]): void {
+    const displayName = posts
+      .find((post) => post.authorUserId === target.userId)
+      ?.authorDisplayName?.trim();
+    if (displayName === undefined || displayName === "" || displayName === target.displayName) {
+      return;
+    }
+    this.deps.targets.setDisplayName(target.id, displayName);
+    logger.info("Target display name updated", {
+      target: target.handle,
+      from: target.displayName,
+      to: displayName,
+    });
   }
 }
 
