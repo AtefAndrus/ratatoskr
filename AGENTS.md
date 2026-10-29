@@ -43,7 +43,7 @@ bun test             # bun:test
 - 認証切れは X が 401/403 を返し続けるだけでプロセスが止まらず、配信だけが静かに落ちる。連続 3 回の失敗で `ADMIN_ALERT_CHANNEL_ID` へ通知する。応答が返らなかった取得は成否のどちらにも数えない (瞬断で誤通知にも取り逃がしにもなるため)。
 - 内部 GraphQL の query ID と feature 一覧は fa0311/TwitterInternalAPIDocument から 6 時間 TTL で取得し、取得失敗時は前回値を使い続ける。
 - 生応答 (AutoPush フレーム、GraphQL 応答、X との登録応答) は保存する。PoC 実測で GraphQL 応答は 1 件 200KB あるため、`RAW_RETENTION_DAYS` で本文だけ先に落とし、行は `RETENTION_DAYS` まで残す。
-- 保持期間の整理は、上限行数ごとの小さなトランザクションに分け、合間にイベントループへ処理を返す。`bun:sqlite` は同期で動くので、1 トランザクションで全行を処理すると、本番 (DB 4.5GB) ではプロセス全体が毎時約 40 秒止まり、起動直後の整理と重なった Coolify のヘルスチェックが落ちる。本文の整理は時刻の索引を (時刻, id) の順にたどり、たどり終えた位置をプロセス内に持って、2 回目以降は新しく期限を過ぎた行だけを読む。位置を主キーの値だけで持たないのは、最大の id の行が消えると SQLite が id を使い回すためである。
+- 保持期間の整理は、上限行数ごとの小さなトランザクションに分け、合間にイベントループへ処理を返す。`bun:sqlite` は同期で動くので、1 トランザクションで全行を処理すると、本番 (DB 4.5GB) ではプロセス全体が毎時約 40 秒止まり、起動直後の整理と重なったヘルスチェックが落ちる。本文の整理は時刻の索引を (時刻, id) の順にたどり、たどり終えた位置をプロセス内に持って、2 回目以降は新しく期限を過ぎた行だけを読む。位置を主キーの値だけで持たないのは、最大の id の行が消えると SQLite が id を使い回すためである。
 - `delivery_queue` と `backlog_progress` は送信と補完再開に必要なので保持期限で消さない。送信済みキューと `delivery_claims` も重複排除の根拠として残す。
 - 管理 API の DB 読み取りは、要求ごとに起動する読み取り専用の子プロセスで実行する。同期で動く `bun:sqlite` がメインプロセスのイベントループを止め、ヘルスチェックを遅らせるためである。Bun 1.4.2 の `Worker.terminate()` は実行中の SQLite クエリを止めないため、20 秒の期限で SIGKILL できる子プロセスを使う。メインプロセスあたり同時に 1 子プロセスだけ動かし、実行中の追加要求には `503` と `Retry-After: 5` を返す。
 - `/health` は Discord 接続だけで判定する。AutoPush の再接続はプロセス内で完結し、コンテナ再起動では回復が早まらないため。
@@ -63,7 +63,7 @@ bun test             # bun:test
 - Renovate が生成した PR は上の規約の例外であり、タイトル、本文、ブランチを直接変更しない。
 - 表示や生成内容を変える場合は `renovate.json5` を変更する。
 - main 更新や競合では Renovate の自動再生成を待ち、更新後の head で CI 成功を確認してからマージする。
-- Release: `/release <version>` skill (`.agents/skills/release/SKILL.md`) で行う。GitHub Release の公開で Coolify へデプロイされ、GHCR (`ghcr.io/atefandrus/ratatoskr`) へイメージが公開される。リリースノートは GitHub の自動生成に任せ、マイグレーション、環境変数、Coolify 側の手作業があるときだけ移行とデプロイ後の確認の節を前に付ける。
+- Release: `/release <version>` skill (`.agents/skills/release/SKILL.md`) で行う。GitHub Release の公開で GHCR (`ghcr.io/atefandrus/ratatoskr`) へイメージが公開され、本番 (talos2 の namespace `personal`) の Flux がそのイメージの tag と digest を AtefAndrus/k8s-tenant-personal へ書き戻して起動し直す (流れは [docs/deployment.md](docs/deployment.md))。リリースノートは GitHub の自動生成に任せ、マイグレーション、環境変数、k8s-tenant-personal 側の手作業があるときだけ移行とデプロイ後の確認の節を前に付ける。
 - main への直接 push はリリースコミットだけで、`scripts/release-publish.sh` が行う。Claude Code に許可するのはこのスクリプトの起動だけで、各自の `.claude/settings.local.json` に `Bash(/bin/bash <リポジトリの絶対パス>/scripts/release-publish.sh *)` を置く。`git push` 自体の許可ルールは足さない。`bun run` や相対パスで許可しないのは、package.json の scripts、`node_modules/.bin`、cwd に置いた同名ファイルで実行内容を差し替えられるためである。スクリプトは作業中のリポジトリで commit や push をせず、PATH をシステムのディレクトリ (`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`) に固定したうえで、作業ツリーから 2 ファイルのバイト列だけを読んで、GIT_* 環境変数を外した一時 bare リポジトリで commit を組み立て、検証した object ID だけを push する。作業中のリポジトリの設定と状態 (clean filter、hook、replace refs、core.fsmonitor、remote の pushurl や vcs helper など) で、検査した内容と push される内容をずらしたり、別のコマンドを実行させたりできるためである。push より前に作業中のリポジトリで実行する git は `rev-parse --verify HEAD` だけにとどめる。検査や組み立てを作業中のリポジトリへ移すと、許可が任意の内容を main へ push する経路になる。
 
 ## Gotchas
