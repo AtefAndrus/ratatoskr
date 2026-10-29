@@ -317,8 +317,8 @@ const MIGRATIONS: ReadonlyArray<(database: Database) => void> = [
     `);
   },
   (database) => {
-    // 失敗した観測は全体の 1% に満たないので、管理 API の errors=1 は索引なしでは表のほぼ全行を読む。
-    // 生応答本文の後ろの列を読むには本文の overflow ページもたどるため、本番では 20 秒の期限を超えた。
+    // 失敗した観測は全体の 1% に満たないので、管理 API の errors=1 は索引なしでは limit 件の失敗が集まるまで
+    // 表を新しい順に読み続け、本番の limit=1000 では DB 読み取りの 20 秒の期限を超えた。
     database.exec(`
       CREATE INDEX internal_graphql_observations_error_idx
         ON internal_graphql_observations(id)
