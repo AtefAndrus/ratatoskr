@@ -95,5 +95,5 @@ public から private へは戻せない。
 | `Receiver provisioning failed` が繰り返し出る | ログの `error` を見る。X が 401/403 を返しているなら Cookie の失効なので `bun run cli receiver:update <label>` で更新する (再起動は不要)。それ以外は Mozilla AutoPush か DB 側の障害で、Cookie を入れ直しても直らない |
 | `/watch add` が「X 側の設定に失敗しました」を返す | 受信アカウントが未登録か、Cookie が失効している。`/admin/exchanges?source=x_target_notifications` で応答を見る |
 | 通知が届かない | `/admin/metrics` の `receivers[].lastNotificationAt` と `/admin/observations?errors=1` を見る |
-| 同じ投稿が 2 回届く | 同じチャンネルへ同じ対象の経路が 2 本ある。`/watch list` で確認する |
+| 同じ投稿が 2 回届く | `/admin/posts/<postId>` でたどる (読み方は [admin-api.md](admin-api.md#投稿-1-件をたどる))。別の監視対象の投稿先が同じチャンネルを指していてリポストが両方から届いた場合や、Discord が受理した後で送信済みを記録する前にプロセスが止まって送り直した場合がある |
 | Release を出してもバージョンが変わらない | k8s-tenant-personal に `Update the ratatoskr image to ...` のコミットが入ったかを見る。入っていなければ Flux の ImagePolicy と ImageUpdateAutomation の状態を、入っていれば StatefulSet の rollout と Pod のログを見る |

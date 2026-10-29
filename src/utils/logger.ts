@@ -11,7 +11,7 @@ export interface RecentLogsOptions {
 }
 
 // 直近のログ行はメモリ上のリングバッファに保持し、/admin/logs から読めるようにする。
-// ファイルへは書かない。永続ログはコンテナの標準出力 (kubectl logs) 側に任せる。
+// ファイルへは書かない。ログは標準出力と標準エラーに出し、kubectl logs で読む。
 const ring: string[] = [];
 
 function serializeMeta(meta: unknown): string {
