@@ -234,6 +234,12 @@ export class InternalGraphqlRepository {
     limit: number,
     filter: { targetHandle?: string; errorsOnly?: boolean } = {},
   ): ObservationView[] {
+    // 条件をパラメータで切り替える形 ($errorsOnly = 0 OR ...) にしないのは、SQLite が部分索引
+    // internal_graphql_observations_error_idx を使えず、失敗の少ない表を全行読むため。
+    const errorsCondition = filter.errorsOnly
+      ? `AND (observations.error IS NOT NULL OR observations.parse_error IS NOT NULL
+              OR observations.response_status IS NULL OR observations.response_status != 200)`
+      : "";
     return this.db
       .query(
         `SELECT observations.id, observations.receiver_id AS receiverId, receivers.label AS receiverLabel,
@@ -251,15 +257,13 @@ export class InternalGraphqlRepository {
          JOIN receivers ON receivers.id = observations.receiver_id
          JOIN watch_targets AS targets ON targets.id = observations.target_id
          WHERE ($targetHandle IS NULL OR targets.handle = $targetHandle)
-           AND ($errorsOnly = 0 OR observations.error IS NOT NULL OR observations.parse_error IS NOT NULL
-                OR observations.response_status IS NULL OR observations.response_status != 200)
+           ${errorsCondition}
          ORDER BY observations.id DESC
          LIMIT $limit`,
       )
       .all({
         limit,
         targetHandle: filter.targetHandle ?? null,
-        errorsOnly: filter.errorsOnly ? 1 : 0,
       }) as ObservationView[];
   }
 
