@@ -80,6 +80,15 @@ export class TargetRepository {
       .run({ id, enabled: enabled ? 1 : 0 });
   }
 
+  setDisplayName(id: number, displayName: string): void {
+    this.db
+      .query(
+        `UPDATE watch_targets SET display_name = $displayName, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = $id`,
+      )
+      .run({ id, displayName: displayName.trim() });
+  }
+
   /**
    * Web Push 通知の主体を確定する。
    * 通知タイトル (表示名) との一致を優先し、一意でなければ URI の投稿者ハンドルで解決する。
