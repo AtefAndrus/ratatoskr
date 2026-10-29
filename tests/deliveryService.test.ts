@@ -168,6 +168,50 @@ describe("DeliveryService", () => {
     }
   });
 
+  test("再試行ループは DB の例外で止まらず、次の周回で失敗した行を送る", async () => {
+    const context = createTestContext();
+    try {
+      const target = addTarget(context, { handle: "example" });
+      context.routes.add({ targetId: target, guildId: "g", channelId: "c1" });
+      const controller = new AbortController();
+      let shouldFail = true;
+      const sent: string[] = [];
+      const sender = {
+        async sendPostUrl(channelId: string, postUrl: string) {
+          if (shouldFail) throw new Error("Discord down");
+          sent.push(`${channelId}:${postUrl}`);
+          controller.abort();
+          return { messageId: "m", embedLinks: null };
+        },
+      };
+      const service = new DeliveryService(context.routes, context.deliveries, sender);
+      await service.deliver({
+        source: "webpush",
+        sourceRecordId: 1,
+        targetId: target,
+        postId: "1",
+        postUrl: "u",
+        kinds: ["posts"],
+        mediaTypes: [],
+      });
+      shouldFail = false;
+      const listReadyIds = context.deliveries.listReadyIds.bind(context.deliveries);
+      let calls = 0;
+      context.deliveries.listReadyIds = (includeFailed?: boolean) => {
+        calls += 1;
+        if (calls === 1) throw new Error("database is locked");
+        return listReadyIds(includeFailed);
+      };
+
+      await service.run(controller.signal, 0);
+
+      expect(calls).toBe(2);
+      expect(sent).toEqual(["c1:u"]);
+    } finally {
+      context.db.close();
+    }
+  });
+
   test("同じ対象を複数チャンネルへ、同じチャンネルへ複数対象を送る", async () => {
     const context = createTestContext();
     try {

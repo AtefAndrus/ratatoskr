@@ -113,10 +113,16 @@ export class DeliveryService {
     this.deliveries.recoverSending(new Date().toISOString());
   }
 
-  async run(signal: AbortSignal): Promise<void> {
+  async run(signal: AbortSignal, intervalMs = DELIVERY_RETRY_INTERVAL_MS): Promise<void> {
     while (!signal.aborted) {
-      await this.drain();
-      await delay(DELIVERY_RETRY_INTERVAL_MS, undefined, { signal }).catch(() => undefined);
+      try {
+        await this.drain();
+      } catch (error) {
+        // 例外でループを抜けると、プロセスが動いている間は再試行が再開せず、/health にも表れない。
+        // デプロイ中に新旧のコンテナが同じ DB へ書くと、キュー行の取得が SQLITE_BUSY で失敗しうる。
+        logger.error("Delivery retry pass failed", { error });
+      }
+      await delay(intervalMs, undefined, { signal }).catch(() => undefined);
     }
   }
 
