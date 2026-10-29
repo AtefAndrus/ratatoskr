@@ -1,12 +1,13 @@
 ---
 name: release
-description: Run the ratatoskr release process. Use when cutting a new version (e.g. `/release 0.7.0`) — bumps the version, generates a versioned CHANGELOG.md, commits, tags, pushes, and publishes a GitHub release with automatically generated notes, which triggers the Coolify deployment and the GHCR image publish.
+description: Run the ratatoskr release process. Use when cutting a new version (e.g. `/release 0.7.0`) — bumps the version, generates a versioned CHANGELOG.md, commits, tags, pushes, and publishes a GitHub release with automatically generated notes, which triggers the GHCR image publish that Flux on the production cluster picks up.
 ---
 
 # Release Workflow
 
 ratatoskr の v<version> をリリースする。
-GitHub Release の公開を契機に `.github/workflows/deploy.yml` が Coolify へデプロイし、`.github/workflows/publish-image.yml` が GHCR へイメージを公開する。
+GitHub Release の公開を契機に `.github/workflows/publish-image.yml` が GHCR へイメージを公開し、本番 (talos2 の namespace `personal`) の Flux がそのイメージの tag と digest を AtefAndrus/k8s-tenant-personal の定義へ書き戻して起動し直す。
+流れの詳細は [docs/deployment.md](../../../docs/deployment.md) の「4. Release からのデプロイ」にある。
 
 コミット、push、Release 作成は `scripts/release-publish.sh` だけが行う。
 `.claude/settings.local.json` の許可ルールは `/bin/bash <リポジトリの絶対パス>/scripts/release-publish.sh` の起動だけを許可しており、`git push` そのものは許可していない。
@@ -32,8 +33,8 @@ Step 1 が出した差分に次のいずれかがあるときだけ、自動生�
 | 差分 | 書く節 |
 | ---- | ---- |
 | `SCHEMA_VERSION` の変更 | `## 移行`: 起動時に走るマイグレーションと、既存データや既存の経路の挙動がどうなるか |
-| 環境変数の追加・変更・既定値の変更 | `## デプロイ後の確認` の冒頭: Coolify で設定が要るか、不要か |
-| Dockerfile や永続ボリューム、Coolify 側の手作業 | `## 移行`: 必要な手作業 |
+| 環境変数の追加・変更・既定値の変更 | `## デプロイ後の確認` の冒頭: k8s-tenant-personal の Secret `ratatoskr-env` で設定が要るか、不要か |
+| Dockerfile や永続ボリューム、k8s-tenant-personal 側の手作業 | `## 移行`: 必要な手作業 |
 | 観測で確かめるべき挙動の変更 | `## デプロイ後の確認`: `/health`、`/watch list`、`bun run cli admin /admin/...` で何を見るか |
 
 Renovate による Dockerfile の bun 更新のように、運用者の作業が要らない差分では節を書かない。
@@ -72,6 +73,7 @@ main の ruleset は必須ステータスチェックを課すが Admin ロー�
 ## Step 4: Verify
 
 1. スクリプトが最後に出力した Release の URL を開ける: `gh release view v<version>`
-2. このリリースの Deploy workflow が成功している。リリースコミットの実行を `gh run list --workflow deploy.yml --commit "$(git rev-parse "v<version>^{commit}")" --json databaseId,status,conclusion` で探し、`gh run watch <databaseId> --exit-status` で終わるまで待つ。公開直後は実行が一覧に出るまで数秒かかり、`-L 1` で最新の実行を見ると前回の成功を今回のものと取り違える。空の一覧はまだ始まっていないことを示し、成功を示さない。この workflow は Coolify にデプロイを起こしたあと、`/health` が新しい版のプロセスを返し、Coolify のロールバック判定を越えて動き続けるまで待つ (`scripts/wait-for-deploy.sh`)。失敗は確認が成り立たなかったことを示し、デプロイの失敗とは限らない (デプロイ前の `/health` を読めなかった、観測中に読めない応答が続いた、など)。再デプロイの前に、Coolify のデプロイログでそのデプロイが完了したか (新しいコンテナがヘルスチェックを通り、旧コンテナが外されたか) を確かめる。`/health` を 1 回読んだだけでは、ロールバック判定の前の新しいコンテナを見ている場合があるので、切り替わったとはみなさない。完了していて `/health` が新しい版を返していれば再デプロイしない。戻されたコンテナのログは Coolify のデプロイログ (all logs) にだけ残る。デプロイログの `Healthcheck logs:` の行で、まず `Return code: 1` と `Health check exceeded timeout (5s) | Return code: -1` を見分ける。ヘルスチェック (Dockerfile の `HEALTHCHECK`) は、`/health` が 2xx 以外 (Discord 未接続の 503 など) を返したときと接続できなかったときに 1 で終わるので、1 なら HTTP サーバーが起動したかと Discord に接続できたかをコンテナのログで調べる。`Return code: -1` に `Health check exceeded timeout (5s)` が付いていれば、ヘルスチェックのコマンドが 5 秒以内に終わらなかったことを示す (-1 に別の文言が付くのは実行時のエラーで、その文言から調べる)。タイムアウトの場合は、DEBUG 行の `.State.Health.Log` にある各回の `Start` と `End` を、コンテナのログの `Event loop stalled` の `lastTickAt` から、その行でアプリが出した角括弧内の時刻までの区間と照らし (タイムゾーンを揃え、行頭に Coolify が付けた取得時刻は使わない)、重なった停止の `activities` から止めた処理の候補を絞る。`Event loop stalled` は約 1 秒以上の遅れごとに停止から戻ったときに出るので、記録があってもタイムアウトの原因とは限らず、止まったままコンテナが消されると残らない。ヘルスチェックの失敗による戻しやビルドの失敗なら、原因を直して workflow を再実行する。
-3. イメージ公開の workflow が成功している: `gh run list --workflow publish-image.yml -L 1`
-4. Release の URL をユーザーに報告する
+2. イメージ公開の workflow が成功している。リリースコミットの実行を `gh run list --workflow publish-image.yml --commit "$(git rev-parse "v<version>^{commit}")" --json databaseId,status,conclusion` で探し、`gh run watch <databaseId> --exit-status` で終わるまで待つ。公開直後は実行が一覧に出るまで数秒かかり、`-L 1` で最新の実行を見ると前回の成功を今回のものと取り違える。空の一覧はまだ始まっていないことを示し、成功を示さない。
+3. Flux がタグと digest を書き戻した。`gh api 'repos/AtefAndrus/k8s-tenant-personal/commits?path=apps/ratatoskr/statefulset.yaml&per_page=1' --jq '.[0] | {sha, date: .commit.committer.date, message: .commit.message}'` の `message` が `Update the ratatoskr image to ghcr.io/atefandrus/ratatoskr:v<version>@sha256:...` の形で `v<version>` を含むまで待つ。ImageRepository と ImageUpdateAutomation はどちらも 30 分間隔なので、公開から 1 時間ほどかかることがある。
+4. 本番が新しいバージョンで動いている。管理 API の宛先 (`ADMIN_BASE_URL`、tailnet の `talos2-personal-ratatoskr` の HTTPS) の `/health` が、`version` に `<version>` を、`startedAt` に書き戻しのコミットより後の時刻を返す。StatefulSet は旧 Pod を止めてから新しい Pod を起動し、新しい Pod の起動に失敗しても前のイメージへ自動では戻らない。切り替わらないときや `/health` が返らないときは、`kubectl rollout status statefulset/ratatoskr -n personal` と `kubectl logs -n personal ratatoskr-0` で起動の失敗を調べる。スキーマを上げたリリースでは、マイグレーションの確定後に前のイメージへ戻すと前のバージョンが起動を拒むので、戻さずに直したバージョンを出し直す。
+5. Release の URL をユーザーに報告する
