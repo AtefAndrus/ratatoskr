@@ -75,7 +75,7 @@ bun run cli admin /admin/logs "level=warn&lines=100"
 署名を自前で組み立てる形は用意していない。
 `canonicalQuery` はサーバ側で値を decode してから `key` 昇順・同一 `key` 内は `value` 昇順に並べ、`encodeURIComponent` で再エンコードしたものになる。
 `since=2026-09-05T00:00:00Z` のコロンが `%3A` になるといった差まで一致させる必要があり、シェルで組み立てると 401 の原因が署名なのか鍵なのか切り分けられなくなる。
-本番の管理 API は tailnet の中だけに公開しており、宛先は Tailscale の machine 名 `talos2-personal-ratatoskr` の HTTPS (`https://talos2-personal-ratatoskr.<tailnet の名前>.ts.net`) である。
+本番の管理 API は tailnet の中だけに公開しており、宛先は Tailscale の machine 名 `ratatoskr` の HTTPS (`https://ratatoskr.<tailnet の名前>.ts.net`) である。
 本番のコンテナは `oven/bun` なので、`kubectl exec -n personal ratatoskr-0 -- bun run cli admin <path>` でコンテナの中からも叩ける。
 
 ## よくある調査
