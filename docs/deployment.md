@@ -17,7 +17,7 @@ GitHub Release を公開すると GHCR へイメージが公開され、Flux が
 | `statefulset.yaml` | `replicas: 1` の StatefulSet `ratatoskr`。Pod は `ratatoskr-0` になる。イメージは `ghcr.io/atefandrus/ratatoskr:<tag>@<digest>` で固定し、`/health` を readinessProbe で 30 秒ごとに見る |
 | `pvc.yaml` | SQLite の置き場の PersistentVolumeClaim `ratatoskr-data` (`/app/data` にマウント)。定義を消してもデータが消えないよう、Flux の prune を止めている |
 | `secret.sops.yaml` | 環境変数の Secret `ratatoskr-env` (SOPS で暗号化)。StatefulSet が `envFrom` で読む |
-| `service.yaml` | 管理 API の Service。基盤の Tailscale Ingress (machine 名 `talos2-personal-ratatoskr`) の backend になり、tailnet の中だけに HTTPS で公開される |
+| `service.yaml` | 管理 API の Service。基盤の Tailscale Ingress (machine 名 `ratatoskr`) の backend になり、tailnet の中だけに HTTPS で公開される |
 | `image.yaml`、`image-update.yaml` | Release のイメージを拾って `statefulset.yaml` の image 行へ書き戻す Flux の image automation (「4. Release からのデプロイ」を参照) |
 
 StatefulSet は旧 Pod を止めてから新しい Pod を起動するので、デプロイのたびに短い停止がある。
@@ -61,7 +61,7 @@ GitHub Release を公開すると、次の順に本番が新しいバージョ�
 4. Flux がその変更を適用し、StatefulSet が Pod を新しいイメージで起動し直す。
 
 ImageRepository と ImageUpdateAutomation はどちらも 30 分間隔で動くので、Release の公開から切り替わるまで 1 時間ほどかかることがある。
-切り替わったかは、tailnet から `https://talos2-personal-ratatoskr.<tailnet の名前>.ts.net/health` の `version` と `startedAt` で確認する。
+切り替わったかは、tailnet から `https://ratatoskr.<tailnet の名前>.ts.net/health` の `version` と `startedAt` で確認する。
 
 起動時のマイグレーションが確定した後でイメージを前のバージョンへ戻すと、DB のスキーマが新しすぎて前のバージョンは起動を拒む (`src/db/schema.ts` の `applyMigrations`)。
 スキーマを上げるリリースで問題が出たときは、前のバージョンへ戻さずに、直したバージョンを出し直す。
