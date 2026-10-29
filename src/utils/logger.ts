@@ -11,7 +11,7 @@ export interface RecentLogsOptions {
 }
 
 // 直近のログ行はメモリ上のリングバッファに保持し、/admin/logs から読めるようにする。
-// ファイルへは書かない。永続ログは Coolify (docker logs) 側に任せる。
+// ファイルへは書かない。永続ログはコンテナの標準出力 (kubectl logs) 側に任せる。
 const ring: string[] = [];
 
 function serializeMeta(meta: unknown): string {

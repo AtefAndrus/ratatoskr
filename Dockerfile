@@ -14,7 +14,7 @@ COPY --from=install --chown=bun:bun /temp/prod/node_modules node_modules
 COPY --chown=bun:bun src ./src
 COPY --chown=bun:bun package.json .
 
-# SQLite の置き場。Coolify の永続ボリュームをここへマウントする
+# SQLite の置き場。永続ボリューム (本番では PersistentVolumeClaim) をここへマウントする
 RUN mkdir -p /app/data && chown -R bun:bun /app/data
 
 ENV NODE_ENV=production

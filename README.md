@@ -23,7 +23,7 @@ X (内部 GraphQL) ◀──適応ポーリング── 受信アカウント �
 - **監視対象**：投稿を中継する X アカウント。Discord の `/watch add` で登録する。
 - **経路**：監視対象と投稿先チャンネルの組。n:m で対応し、同じ対象を複数チャンネルへ流すことも、複数の対象を 1 つのチャンネルへ集約することもできる。
 
-ランタイムは Bun、永続化は SQLite 1 ファイル、デプロイ先は Coolify である。
+ランタイムは Bun、永続化は SQLite 1 ファイルで、本番は Kubernetes (Flux で管理する talos2 のクラスタ) 上で動く。
 
 ## はじめかた
 
@@ -51,8 +51,7 @@ X (内部 GraphQL) ◀──適応ポーリング── 受信アカウント �
 
 5. Bot を招待したサーバーで `/watch add account:<X アカウント名>` を実行する。
 
-本番へは Coolify にデプロイする。手順は [docs/deployment.md](docs/deployment.md) を参照する。
-Release の公開ではコンテナイメージも `ghcr.io/atefandrus/ratatoskr` へ公開する。
+本番へのデプロイは、Release の公開で `ghcr.io/atefandrus/ratatoskr` へ公開したコンテナイメージを、Flux が拾って起動し直す形で行う。構成と手順は [docs/deployment.md](docs/deployment.md) を参照する。
 
 ## コマンド
 
@@ -94,8 +93,8 @@ Release の公開ではコンテナイメージも `ghcr.io/atefandrus/ratatoskr
 
 ## 運用
 
-- **デプロイ**：Coolify のアプリ作成、永続ボリューム、環境変数、GitHub Release からの自動デプロイは [docs/deployment.md](docs/deployment.md) に記載する。
-- **コンテナイメージ**：Release の公開で `ghcr.io/atefandrus/ratatoskr` へ、Release のタグ名とコミットの完全な SHA のタグで公開する。既存タグは上書きせず、`latest` は付けない。package は初回公開時に private で作られるため、初回公開後に所有者が public へ切り替える。詳細は [docs/deployment.md](docs/deployment.md#6-ghcr-へのイメージ公開) に記載する。
+- **デプロイ**：本番の Kubernetes の定義、永続ボリューム、環境変数、Release からの自動デプロイは [docs/deployment.md](docs/deployment.md) に記載する。
+- **コンテナイメージ**：Release の公開で `ghcr.io/atefandrus/ratatoskr` へ、Release のタグ名とコミットの完全な SHA のタグで公開する。既存タグは上書きせず、`latest` は付けない。package は初回公開時に private で作られるため、初回公開後に所有者が public へ切り替える。詳細は [docs/deployment.md](docs/deployment.md#5-ghcr-へのイメージ公開) に記載する。
 - **運用データ**：X 側の仕様変更を追えるよう、AutoPush の生フレーム、復号済みペイロード、内部 GraphQL の生応答、X との登録やフォローの応答を SQLite に保存する。生応答本文は `RAW_RETENTION_DAYS` を過ぎると本文だけ削除し、行は `RETENTION_DAYS` まで残す。未送信キュー、補完進捗、重複排除の根拠である配信 claim は保持期限で削除しない。
 - **管理 API**：保存したデータは HMAC 認証付きの読み取り専用 API から取得できる。エンドポイントと署名手順は [docs/admin-api.md](docs/admin-api.md) に記載する。
 
@@ -125,7 +124,7 @@ VS Code の `oxc.oxc-vscode` 拡張はバイナリを同梱せず、`node_module
 main への直接コミットは lefthook が止める。
 
 リリースは `/release <version>` skill で行う。手順は [.agents/skills/release/SKILL.md](.agents/skills/release/SKILL.md) にある。
-Release の公開で Coolify へデプロイされ、GHCR へイメージが公開される。
+Release の公開で GHCR へイメージが公開され、Flux がそのイメージで本番を起動し直す。
 
 ## ライセンス
 
