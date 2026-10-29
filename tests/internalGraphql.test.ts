@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { generateClientTransactionId, parseTransactionPairs } from "../src/x/clientTransactionId";
 import {
+  classifyTweetResult,
   extractTimelinePosts,
   extractTimelinePage,
   InternalGraphqlConfigurationProvider,
@@ -41,7 +42,9 @@ describe("X 内部 GraphQL", () => {
                                 rest_id: "40",
                                 core: {
                                   user_results: {
-                                    result: { core: { screen_name: "Origin_User" } },
+                                    result: {
+                                      core: { screen_name: "Origin_User", name: "元投稿の作者" },
+                                    },
                                   },
                                 },
                               },
@@ -78,6 +81,8 @@ describe("X 内部 GraphQL", () => {
       { id: "4", types: ["repost"], references: ["40"] },
     ]);
     expect(posts.every((post) => post.authorHandle === "example")).toBe(true);
+    // リポストでも元投稿の投稿者ではなく、リポストした側の表示名を読む。
+    expect(posts.every((post) => post.authorDisplayName === "例の表示名")).toBe(true);
     expect(posts.map((post) => post.referencedAuthorHandle)).toEqual([
       null,
       null,
@@ -85,6 +90,17 @@ describe("X 内部 GraphQL", () => {
       "origin_user",
     ]);
     expect(posts.every((post) => post.createdAt === "2026-09-03T00:00:00.000Z")).toBe(true);
+  });
+
+  test("投稿者の表示名は core.name を優先し、無ければ legacy.name を読む", () => {
+    expect(
+      classifyTweetResult(tweetByUser({ core: { name: "新" }, legacy: { name: "旧" } }))
+        ?.authorDisplayName,
+    ).toBe("新");
+    expect(classifyTweetResult(tweetByUser({ legacy: { name: "旧" } }))?.authorDisplayName).toBe(
+      "旧",
+    );
+    expect(classifyTweetResult(tweetByUser({}))?.authorDisplayName).toBeNull();
   });
 
   test("Bottomカーソルを抽出し、固定投稿を重なり判定と投稿枠から外す", () => {
@@ -415,6 +431,14 @@ function entry(entryId: string, itemContent: object): object {
   return { entryId, content: { itemContent } };
 }
 
+function tweetByUser(user: object): object {
+  return {
+    rest_id: "1",
+    core: { user_results: { result: { rest_id: "99", ...user } } },
+    legacy: { created_at: "Thu Sep 03 00:00:00 +0000 2026", user_id_str: "99" },
+  };
+}
+
 function tweet(
   id: string,
   legacy: object,
@@ -425,7 +449,11 @@ function tweet(
       result: {
         __typename: "Tweet",
         rest_id: id,
-        core: { user_results: { result: { rest_id: "99", core: { screen_name: "Example" } } } },
+        core: {
+          user_results: {
+            result: { rest_id: "99", core: { screen_name: "Example", name: "例の表示名" } },
+          },
+        },
         legacy: { created_at: "Thu Sep 03 00:00:00 +0000 2026", user_id_str: "99", ...legacy },
         ...extra,
       },

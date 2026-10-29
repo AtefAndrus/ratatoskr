@@ -29,8 +29,8 @@ describe("保持期間の整理の分割", () => {
         time: "2026-09-01T00:00:00.000Z",
         id: 2_500,
       });
-      // 本文の整理 3 回と、表ごとに 1 回ずつの削除
-      expect(yields).toBe(3 + 4);
+      // 本文の整理 25 回と、表ごとに 1 回ずつの削除
+      expect(yields).toBe(25 + 4);
 
       yields = 0;
       seedObservations(context, 10, "2026-09-02T12:00:00.000Z");

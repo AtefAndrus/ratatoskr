@@ -904,6 +904,7 @@ function postAt(postId: string, createdAt: string) {
     createdAt,
     authorUserId: "42",
     authorHandle: "example",
+    authorDisplayName: null,
     types: ["original" as const],
     referencedPostIds: [],
     referencedAuthorHandle: null,

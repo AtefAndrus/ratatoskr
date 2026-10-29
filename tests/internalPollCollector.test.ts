@@ -7,7 +7,11 @@ import {
   InternalPollCollector,
 } from "../src/pipeline/internalPollCollector";
 import { DeliveryService } from "../src/services/deliveryService";
-import type { InternalTimelineFetchResult, XInternalGraphqlClient } from "../src/x/internalGraphql";
+import type {
+  InternalTimelineFetchResult,
+  InternalTimelinePost,
+  XInternalGraphqlClient,
+} from "../src/x/internalGraphql";
 import {
   addReceiver,
   addTarget,
@@ -188,6 +192,7 @@ describe("内部 GraphQL からの Discord 通知", () => {
                 createdAt: "2026-09-05T00:00:00.000Z",
                 authorUserId: "42",
                 authorHandle: "example",
+                authorDisplayName: null,
                 types: ["reply"],
                 referencedPostIds: ["1"],
                 referencedAuthorHandle: null,
@@ -219,6 +224,55 @@ describe("内部 GraphQL からの Discord 通知", () => {
         lastError: null,
       });
       expect(context.observations.listRecent(10)).toHaveLength(1);
+    } finally {
+      context.db.close();
+    }
+  });
+
+  test("監視対象本人の投稿から表示名を取り直し、改名後のリポスト通知を監視対象に結ぶ", async () => {
+    const context = createTestContext();
+    try {
+      const receiverId = addReceiver(context);
+      const target = addTarget(context, { userId: "42", handle: "example", displayName: "旧名" });
+      const controller = new AbortController();
+      const client = {
+        async fetchUserTweetsAndReplies(input: {
+          userId: string;
+        }): Promise<InternalTimelineFetchResult> {
+          controller.abort();
+          return {
+            ...emptyTimelinePage("cursor"),
+            variables: { userId: input.userId },
+            regularPostIds: ["600", "601"],
+            unpinnedPostIds: ["600", "601"],
+            // 会話の文脈として先に並ぶ他人の投稿の表示名は使わない。
+            posts: [
+              timelinePost("600", "7", "someone", "他人"),
+              timelinePost("601", "42", "example", "新名"),
+            ],
+          };
+        },
+      } as unknown as XInternalGraphqlClient;
+      const collector = new InternalPollCollector({
+        receiverId,
+        receiverLabel: "receiver-a",
+        client,
+        targets: context.targets,
+        observations: context.observations,
+        backlog: context.backlog,
+        delivery: null,
+        selectTargets: (targets) => targets,
+      });
+
+      await collector.run(controller.signal);
+
+      expect(context.targets.getById(target)?.displayName).toBe("新名");
+      expect(
+        context.targets.resolveNotificationTarget({
+          authorHandle: "origin_user",
+          notificationTitle: "新名",
+        })?.id,
+      ).toBe(target);
     } finally {
       context.db.close();
     }
@@ -444,6 +498,26 @@ function createPost(
     referencedAuthorHandle,
     mediaTypesJson: mediaTypes === null ? null : JSON.stringify(mediaTypes),
     isNew: true,
+  };
+}
+
+function timelinePost(
+  postId: string,
+  authorUserId: string,
+  authorHandle: string,
+  authorDisplayName: string,
+): InternalTimelinePost {
+  return {
+    postId,
+    createdAt: "2026-09-05T00:00:00.000Z",
+    authorUserId,
+    authorHandle,
+    authorDisplayName,
+    types: ["original"],
+    referencedPostIds: [],
+    referencedAuthorHandle: null,
+    mediaTypes: [],
+    rawResult: {},
   };
 }
 
