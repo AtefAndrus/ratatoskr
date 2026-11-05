@@ -43,12 +43,16 @@
       automerge: true,
       automergeStrategy: "squash",
     },
+    // separateMajorMinor: false の 3 グループは、自動マージを待つ PR に後から major が加わりうる。
+    // GitHub の auto-merge は一度付くと Renovate が外さないので使わず (platformAutomerge: false)、
+    // Renovate が実行ごとに今の中身で automerge を判定し直して自分でマージする
     // bun は mise / Dockerfile / bun-types の 3 経路を 1 本の PR に載せ、CI の drift-check を通す
     {
       groupName: "bun toolchain",
       groupSlug: "bun-toolchain",
       matchDepNames: ["bun", "oven/bun", "bun-types"],
       separateMajorMinor: false,
+      platformAutomerge: false,
     },
     // oxlint / oxfmt / oxlint-tsgolint は同じ oxc リリース列で動くので揃えて上げる
     {
@@ -56,6 +60,7 @@
       groupSlug: "oxc-toolchain",
       matchDepNames: ["oxlint", "oxfmt", "oxlint-tsgolint"],
       separateMajorMinor: false,
+      platformAutomerge: false,
     },
     {
       groupName: "zizmor",
@@ -63,6 +68,7 @@
       matchPackageNames: ["ghcr.io/zizmorcore/zizmor", "zizmorcore/zizmor-action"],
       minimumGroupSize: 2,
       separateMajorMinor: false,
+      platformAutomerge: false,
     },
     {
       matchPackageNames: ["ghcr.io/zizmorcore/zizmor"],
