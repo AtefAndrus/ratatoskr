@@ -20,6 +20,10 @@ COPY --from=install --chown=1000:1000 /temp/data /app/data
 
 ENV NODE_ENV=production
 ENV DATABASE_PATH=/app/data/ratatoskr.db
+# distroless は SSL_CERT_FILE に Debian の CA 束を設定し、Bun はそこにある証明書を内蔵のルート証明書に足して信頼する。
+# 信頼するルートを Bun が内蔵する NSS の版にとどめるため、空にして読ませない。
+# slim は /etc/ssl/certs のハッシュ名のファイル経由で Debian のルートも信頼していたが、distroless にはそのファイルが無い
+ENV SSL_CERT_FILE=
 
 EXPOSE 3000
 
