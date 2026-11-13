@@ -97,3 +97,4 @@ AutoPush connected
 
 `Receiver provisioning failed` が繰り返し出る場合は Cookie の値が違うか失効している。
 `bun run cli receiver:update <label>` で入れ直す。再起動は要らない。
+本番のコンテナの中では `bun run cli` が動かないので、`bun run src/cli.ts receiver:update <label>` を使う ([deployment.md](deployment.md#3-受信アカウントの登録))。

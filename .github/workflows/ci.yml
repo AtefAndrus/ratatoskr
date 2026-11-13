@@ -27,7 +27,9 @@ jobs:
         run: |
           mise_v=$(sed -nE 's/^bun[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*$/\1/p' mise.toml)
           docker_vs=$(sed -nE 's#^FROM oven/bun:([0-9]+\.[0-9]+\.[0-9]+)-(slim|distroless)@.*#\1#p' Dockerfile)
-          if [ "$(printf '%s' "$docker_vs" | grep -c .)" -ne "$(grep -c '^FROM oven/bun:' Dockerfile)" ] \
+          # 読み取れる形に限らず、oven/bun を参照する FROM 行 (小文字や --platform 付きを含む) をすべて数え、
+          # 読み取れない書き方の行が版の比較をすり抜けないようにする
+          if [ "$(printf '%s' "$docker_vs" | grep -c .)" -ne "$(grep -Eic '^[[:space:]]*from[[:space:]].*oven/bun' Dockerfile)" ] \
             || [ "$(printf '%s' "$docker_vs" | sort -u | grep -c .)" -gt 1 ]; then
             echo "::error::every oven/bun FROM in Dockerfile must pin the same exact patch"; exit 1
           fi
