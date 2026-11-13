@@ -22,10 +22,16 @@ jobs:
       # bun の版が mise.toml (SSOT)、Dockerfile、bun.lock の bun-types で完全一致するか検証する。
       # 開発と CI は mise.toml、本番は Dockerfile の base image が bun を決める。
       # どちらも exact 指定を要求し、片側だけが浮動指定へ戻った時点で落とす。
+      # Dockerfile は依存取得の slim と実行の distroless の 2 つの FROM を持つので、両方が同じ版であることも求める。
       - name: bun version drift check (mise SSOT)
         run: |
           mise_v=$(sed -nE 's/^bun[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*$/\1/p' mise.toml)
-          docker_v=$(sed -nE 's#^FROM oven/bun:([0-9]+\.[0-9]+\.[0-9]+)-slim@.*#\1#p' Dockerfile | head -n1)
+          docker_vs=$(sed -nE 's#^FROM oven/bun:([0-9]+\.[0-9]+\.[0-9]+)-(slim|distroless)@.*#\1#p' Dockerfile)
+          if [ "$(printf '%s' "$docker_vs" | grep -c .)" -ne "$(grep -c '^FROM oven/bun:' Dockerfile)" ] \
+            || [ "$(printf '%s' "$docker_vs" | sort -u | grep -c .)" -gt 1 ]; then
+            echo "::error::every oven/bun FROM in Dockerfile must pin the same exact patch"; exit 1
+          fi
+          docker_v=$(printf '%s' "$docker_vs" | head -n1)
           types_v=$(sed -nE 's/^[[:space:]]*"bun-types": \["bun-types@([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' bun.lock | head -n1)
           echo "mise=$mise_v dockerfile=$docker_v bun-types=$types_v"
           if [ -z "$mise_v" ] || [ -z "$docker_v" ] || [ -z "$types_v" ]; then

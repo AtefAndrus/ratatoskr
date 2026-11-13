@@ -42,10 +42,11 @@ Secret `ratatoskr-env` には少なくとも次を入れる。
 
 起動して `kubectl logs -n personal ratatoskr-0` に `Discord client ready` と `HTTP server started` が出たら、Pod の中で受信アカウントを登録する。
 CLI は Cookie を非表示入力で受け取るので、`-it` を付ける。
+本番のイメージは distroless でシェルを持たず、package.json の script を実行する `bun run cli` は `MissingShell` で失敗するので、`src/cli.ts` を直接実行する。
 値の取り方と CLI の詳細は [setup.md](setup.md#受信用-x-アカウント) を参照する。
 
 ```bash
-kubectl exec -it -n personal ratatoskr-0 -- bun run cli receiver:add main
+kubectl exec -it -n personal ratatoskr-0 -- bun run src/cli.ts receiver:add main
 ```
 
 1 分以内にログへ `AutoPush subscription created` と `Web Push subscription registered with X` が出れば受信を開始している。
