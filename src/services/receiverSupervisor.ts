@@ -178,7 +178,7 @@ export class ReceiverSupervisor {
         : [
             "### 受信アカウントの認証が切れている",
             `**${label}** の X への要求が ${entry.auth.failureStreak} 回続けて拒否された。`,
-            `X の Cookie を取り直して \`bun run cli receiver:update ${label}\` で更新する。再起動は要らない。`,
+            `X の Cookie を取り直して \`bun run src/cli.ts receiver:update ${label}\` で更新する。再起動は要らない。`,
           ].join("\n");
     if (this.deps.alerts === undefined) {
       // 通知先が無い運用では伝わったことにする。しないと判定が毎回立ち続ける。

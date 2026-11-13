@@ -9,15 +9,15 @@ import { readHiddenLine } from "./utils/hiddenInput";
 import { X_WEB_BEARER_TOKEN } from "./x/credentials";
 
 const USAGE = `使用方法:
-  bun run cli receiver:add <label>      受信用 X アカウントを登録する (auth_token / ct0 を入力)
-  bun run cli receiver:update <label>   受信用 X アカウントの認証情報を更新する
-  bun run cli receiver:list             受信用 X アカウントの一覧を表示する
-  bun run cli receiver:enable <label>   受信用 X アカウントを有効にする
-  bun run cli receiver:disable <label>  受信用 X アカウントを無効にする
-  bun run cli receiver:remove <label>   受信用 X アカウントを削除する
-  bun run cli watch:list                監視対象と投稿先チャンネルの一覧を表示する
-  bun run cli env:set <NAME> [file]     値を非表示入力して .env.local (既定) に書き込む
-  bun run cli admin <path> [query]      管理 API を署名付きで叩く (例: admin /admin/metrics)
+  bun run src/cli.ts receiver:add <label>      受信用 X アカウントを登録する (auth_token / ct0 を入力)
+  bun run src/cli.ts receiver:update <label>   受信用 X アカウントの認証情報を更新する
+  bun run src/cli.ts receiver:list             受信用 X アカウントの一覧を表示する
+  bun run src/cli.ts receiver:enable <label>   受信用 X アカウントを有効にする
+  bun run src/cli.ts receiver:disable <label>  受信用 X アカウントを無効にする
+  bun run src/cli.ts receiver:remove <label>   受信用 X アカウントを削除する
+  bun run src/cli.ts watch:list                監視対象と投稿先チャンネルの一覧を表示する
+  bun run src/cli.ts env:set <NAME> [file]     値を非表示入力して .env.local (既定) に書き込む
+  bun run src/cli.ts admin <path> [query]      管理 API を署名付きで叩く (例: admin /admin/metrics)
 
 認証情報は対話端末では非表示入力で受け取る。端末が無い場合は環境変数 X_AUTH_TOKEN と X_CT0 から読む。
 admin は ADMIN_API_SECRET と、宛先の ADMIN_BASE_URL (既定 http://localhost:3000) を環境変数から読む。`;

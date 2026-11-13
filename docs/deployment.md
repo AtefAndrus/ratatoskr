@@ -42,10 +42,11 @@ Secret `ratatoskr-env` には少なくとも次を入れる。
 
 起動して `kubectl logs -n personal ratatoskr-0` に `Discord client ready` と `HTTP server started` が出たら、Pod の中で受信アカウントを登録する。
 CLI は Cookie を非表示入力で受け取るので、`-it` を付ける。
+本番のイメージは distroless でシェルを持たず、package.json の script を実行する `bun run cli` は `MissingShell` で失敗するので、`src/cli.ts` を直接実行する。
 値の取り方と CLI の詳細は [setup.md](setup.md#受信用-x-アカウント) を参照する。
 
 ```bash
-kubectl exec -it -n personal ratatoskr-0 -- bun run cli receiver:add main
+kubectl exec -it -n personal ratatoskr-0 -- bun run src/cli.ts receiver:add main
 ```
 
 1 分以内にログへ `AutoPush subscription created` と `Web Push subscription registered with X` が出れば受信を開始している。
@@ -92,7 +93,7 @@ public から private へは戻せない。
 
 | 症状 | 確認 |
 | ---- | ---- |
-| `Receiver provisioning failed` が繰り返し出る | ログの `error` を見る。X が 401/403 を返しているなら Cookie の失効なので `bun run cli receiver:update <label>` で更新する (再起動は不要)。それ以外は Mozilla AutoPush か DB 側の障害で、Cookie を入れ直しても直らない |
+| `Receiver provisioning failed` が繰り返し出る | ログの `error` を見る。X が 401/403 を返しているなら Cookie の失効なので `kubectl exec -it -n personal ratatoskr-0 -- bun run src/cli.ts receiver:update <label>` で更新する (再起動は不要)。それ以外は Mozilla AutoPush か DB 側の障害で、Cookie を入れ直しても直らない |
 | `/watch add` が「X 側の設定に失敗しました」を返す | 受信アカウントが未登録か、Cookie が失効している。`/admin/exchanges?source=x_target_notifications` で応答を見る |
 | 通知が届かない | `/admin/metrics` の `receivers[].lastNotificationAt` と `/admin/observations?errors=1` を見る |
 | 同じ投稿が 2 回届く | `/admin/posts/<postId>` でたどる (読み方は [admin-api.md](admin-api.md#投稿-1-件をたどる))。別の監視対象の投稿先が同じチャンネルを指していてリポストが両方から届いた場合や、Discord が受理した後で送信済みを記録する前にプロセスが止まって送り直した場合がある |
