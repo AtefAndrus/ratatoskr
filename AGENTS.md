@@ -71,7 +71,7 @@ bun test             # bun:test
 ## Gotchas
 
 - `mise.toml` の bun 版が SSOT。`Dockerfile` の 2 つの base image タグ (依存取得の slim と実行の distroless) と `bun.lock` の `bun-types` を同じ patch に揃えないと CI の drift-check が落ちる。
-- 本番のイメージは distroless でシェルを持たない。`bun run <script>` は package.json の script を `/bin/sh` で実行するので `MissingShell` で失敗する。コンテナの中では `bun run src/cli.ts` のようにファイルを直接実行し、Dockerfile の `RUN` と `HEALTHCHECK` も release ステージではシェル形式で書かない。
+- 本番のイメージは distroless でシェルを持たない。`bun run <script>` は package.json の script を実行する前に外部のシェル (bash、sh、zsh) を探すので、`--shell=bun` を付けても `MissingShell` で失敗する。コンテナの中では `bun run src/cli.ts` のようにファイルを直接実行し、Dockerfile の `RUN` と `HEALTHCHECK` も release ステージではシェル形式で書かない。
 - Bun の `.env` 自動読み込みは `bun run` 経由で効かないことがあるため、`src/config/index.ts` が `.env.local` と `.env` を自分で読む。
 - `bun:sqlite` の `changes` は外部キーの連鎖削除分も含む。削除件数の厳密な検証には使わない。
 - X 側の仕様が変わったときは `/admin/exchanges` と `/admin/observations?errors=1` で生応答を確認する。
