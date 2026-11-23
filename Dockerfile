@@ -1,13 +1,13 @@
 # 依存の取得はシェルが要るので slim で行い、実行は同じ版の distroless で行う。
 # distroless はシェル、apt、perl などを持たず、bun が読み込む libc 以外の Debian パッケージの脆弱性を抱えない。
-FROM oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4 AS install
+FROM oven/bun:1.4.5-slim@sha256:b780593f3e10918cbdaec3d5a08d52224b9198069a65eb47812085c2ec007643 AS install
 RUN mkdir -p /temp/prod /temp/data
 # .npmrc も渡す。bun.lock は取得元を持たないので、これが無いと本番イメージだけが既定レジストリから取得する
 COPY package.json bun.lock .npmrc /temp/prod/
 # --ignore-scripts: prepare (lefthook install) は開発用で、本番イメージでは不要かつ devDependency 不在で失敗する
 RUN cd /temp/prod && bun install --frozen-lockfile --production --ignore-scripts
 
-FROM oven/bun:1.4.4-distroless@sha256:153a951ae40106e125898103e6e990ee0f38e6aee7f561029e26cf9fbed23470 AS release
+FROM oven/bun:1.4.5-distroless@sha256:3a210956422ad81cf7532e1fc1f2eb9275d6ef4c2337a9d25d530f798e80726a AS release
 WORKDIR /app
 # distroless には bun ユーザーが無いので、slim の bun ユーザーと同じ 1000:1000 を数値で指定する。
 # 本番の Pod も runAsUser / fsGroup に 1000 を指定している
