@@ -1,5 +1,5 @@
 [tools]
-bun = "1.4.4"
+bun = "1.4.5"
 "aqua:orhun/git-cliff" = "2.14.2"
 # 本番調査の手順書 (.agents/skills/production-investigation) が管理 API の応答を読むのに使う
 "aqua:jqlang/jq" = "1.8.2"
